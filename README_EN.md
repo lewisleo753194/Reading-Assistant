@@ -46,7 +46,14 @@ Advanced configurations inherit the default endpoint and key when those fields a
 - `GET /models`
 - `POST /chat/completions`
 
-Text-based deep-thinking requests do not send images to a text-only reasoning model. A visual-only selection falls back to the configured vision model.
+When an image selection and Deep thinking are both active, the app asks the user to turn off Deep thinking instead of silently dropping the image and answering from document context.
+
+## Skills and language packs
+
+- In **Settings → Skill settings**, choose a folder whose root contains `SKILL.md`. The app imports the Skill instructions and readable text reference files in that folder.
+- AI selects a Skill automatically from its `name` and `description`. Start a chat message with `/skill-command` to require a specific Skill.
+- In **Settings → Language settings**, import a folder containing `language.json`. A pack must define `code`, `label`, `aiLanguage`, and `strings`.
+- The selected language controls the UI, AI response language, and translation target language.
 
 ## Run from source
 

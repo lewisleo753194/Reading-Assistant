@@ -35,3 +35,28 @@ export type AiConfig = {
   reasoningBaseUrl: string
   reasoningModel: string
 }
+
+export type ImportedSkill = {
+  id: string
+  name: string
+  command: string
+  description: string
+  instructions: string
+  sourcePath: string
+}
+
+export type FolderImportResult = {
+  canceled?: boolean
+  folderPath?: string
+  files?: Array<{ path: string; content: string }>
+  error?: string
+}
+
+declare global {
+  interface Window {
+    readingAssistant?: {
+      selectSkillFolder: () => Promise<FolderImportResult>
+      selectLanguageFolder: () => Promise<FolderImportResult>
+    }
+  }
+}

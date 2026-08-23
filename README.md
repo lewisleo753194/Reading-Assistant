@@ -45,7 +45,14 @@ Windows 用户可以在 [GitHub Releases](https://github.com/lxymol/Reading-Assi
 - `GET /models`
 - `POST /chat/completions`
 
-纯文字深度思考不会向不支持视觉的模型发送图片；只有缺少可用文字的视觉选区才会交给视觉模型。
+图片选区与深度思考同时开启时，应用会明确提示关闭深度思考，避免丢弃图片后误用全文回答。
+
+## Skill 与语言包
+
+- 在“设置 → 技能设置”中选择一个根目录含 `SKILL.md` 的文件夹。应用会读取 Skill 说明及目录中的文本参考文件。
+- AI 默认根据 Skill 的 `name` 和 `description` 自动选择；也可在聊天开头输入 `/skill-command` 强制指定。
+- 在“设置 → 语言设置”中可导入包含 `language.json` 的文件夹。语言包需包含 `code`、`label`、`aiLanguage` 和 `strings` 字段。
+- 选中语言同时控制界面语言、AI 回答语言和翻译目标语言。
 
 ## 从源码运行
 

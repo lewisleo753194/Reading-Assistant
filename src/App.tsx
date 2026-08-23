@@ -9,14 +9,15 @@ import 'katex/dist/katex.min.css'
 import {
   BookOpen, BrainCircuit, ChevronLeft, ChevronRight, Copy, FileText, Languages,
   Lightbulb, LoaderCircle, MessageSquareText, Minus, Moon, PanelRightClose,
-  PanelRightOpen, Plus, Send, Settings2, Sparkles, Sun, Upload, MousePointer2, TextCursorInput, X,
+  PanelRightOpen, Plus, Puzzle, Send, Settings2, Sparkles, Sun, Upload, MousePointer2, TextCursorInput, X,
 } from 'lucide-react'
 import DropZone from './components/DropZone'
 import DocumentViewer from './components/DocumentViewer'
 import AiSettingsModal from './components/AiSettingsModal'
 import { extractPdfRegionText, extractPdfText, getSampledPageNumbers } from './lib/pdf'
-import type { AiConfig, ChatMessage, SelectionResult, SourceFile } from './types'
-import { getLanguagePacks, useI18n, type AppLanguage } from './i18n'
+import type { AiConfig, ChatMessage, ImportedSkill, SelectionResult, SourceFile } from './types'
+import { getLanguagePacks, registerLanguagePack, useI18n, type AppLanguage, type LanguagePack } from './i18n'
+import { parseLanguageImport, parseSkillImport } from './lib/imports'
 
 type AiAction = 'translate' | 'explain' | 'insight' | 'summarize' | 'custom'
 type CapturedSelection = SelectionResult & { id: string; text: string; textParts: string[]; loading: boolean }
@@ -67,6 +68,14 @@ const loadAiConfig = (): AiConfig => {
 }
 
 const loadDarkTheme = () => localStorage.getItem('reading-assistant-theme') === 'dark'
+const loadSkills = (): ImportedSkill[] => {
+  try {
+    const value = JSON.parse(localStorage.getItem('reading-assistant-skills') || '[]')
+    return Array.isArray(value) ? value : []
+  } catch {
+    return []
+  }
+}
 
 export default function App({ onLanguageChange }: { onLanguageChange: (language: AppLanguage) => void }) {
   const { t, pack } = useI18n()
@@ -99,6 +108,7 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
   const [configured, setConfigured] = useState<boolean | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [aiConfig, setAiConfig] = useState<AiConfig>(loadAiConfig)
+  const [skills, setSkills] = useState<ImportedSkill[]>(loadSkills)
   const [deepThinking, setDeepThinking] = useState(false)
   const hasVisualSelection = aiConfig.visionEnabled && selections.some((item) => item.images.length > 0)
   const selectionReady = Boolean(selectedText || hasVisualSelection)
@@ -116,6 +126,8 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
   const pendingPageRestoreRef = useRef<number | null>(null)
   const currentAiTaskKey = activeWorkAreaId ? `${activeWorkAreaId}:${activeConversationId}` : ''
   const currentAiBusy = aiTasks.has(currentAiTaskKey)
+  const slashSkillQuery = customPrompt.match(/^\/([^\s]*)$/)?.[1].toLocaleLowerCase()
+  const skillSuggestions = slashSkillQuery === undefined ? [] : skills.filter((skill) => skill.command.toLocaleLowerCase().includes(slashSkillQuery) || skill.name.toLocaleLowerCase().includes(slashSkillQuery)).slice(0, 8)
 
   useEffect(() => {
     const move = (event: PointerEvent) => {
@@ -475,12 +487,66 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
       : area))
   }
 
+  const importSkillFolder = async () => {
+    if (!window.readingAssistant) throw new Error(t('desktopImportOnly'))
+    const result = await window.readingAssistant.selectSkillFolder()
+    if (result.canceled) return false
+    const skill = parseSkillImport(result)
+    const next = [...skills.filter((item) => item.sourcePath !== skill.sourcePath && item.command !== skill.command), skill].slice(-12)
+    localStorage.setItem('reading-assistant-skills', JSON.stringify(next))
+    setSkills(next)
+    return true
+  }
+
+  const removeSkill = (id: string) => {
+    setSkills((items) => {
+      const next = items.filter((item) => item.id !== id)
+      localStorage.setItem('reading-assistant-skills', JSON.stringify(next))
+      return next
+    })
+  }
+
+  const importLanguageFolder = async () => {
+    if (!window.readingAssistant) throw new Error(t('desktopImportOnly'))
+    const result = await window.readingAssistant.selectLanguageFolder()
+    if (result.canceled) return false
+    const languagePack = parseLanguageImport(result)
+    let imported: LanguagePack[]
+    try {
+      const saved = JSON.parse(localStorage.getItem('reading-assistant-language-packs') || '[]')
+      imported = Array.isArray(saved) ? saved : []
+    } catch { imported = [] }
+    const next = [...imported.filter((item) => item.code !== languagePack.code), languagePack]
+    localStorage.setItem('reading-assistant-language-packs', JSON.stringify(next))
+    registerLanguagePack(languagePack)
+    localStorage.setItem('reading-assistant-language', languagePack.code)
+    onLanguageChange(languagePack.code)
+    return true
+  }
+
+  const changeLanguage = (language: AppLanguage) => {
+    localStorage.setItem('reading-assistant-language', language)
+    onLanguageChange(language)
+  }
+
   const runAi = async (action: AiAction, instruction = '') => {
     setError('')
     if (!source || !activeWorkAreaId) return
     if (scope === 'selection' && !selectionReady) {
       setError(t('selectFirst'))
       return
+    }
+    let effectiveInstruction = instruction.trim()
+    let requestedSkillId = ''
+    if (action === 'custom' && effectiveInstruction.startsWith('/')) {
+      const commandMatch = effectiveInstruction.match(/^\/([^\s]+)(?:\s+([\s\S]*))?$/)
+      const requestedSkill = commandMatch && skills.find((skill) => skill.command.toLocaleLowerCase() === commandMatch[1].toLocaleLowerCase())
+      if (!requestedSkill) {
+        setError(t('unknownSkill'))
+        return
+      }
+      requestedSkillId = requestedSkill.id
+      effectiveInstruction = commandMatch?.[2]?.trim() || (pack.code === 'en-US' ? 'Apply this skill to the current material.' : '请使用此 Skill 处理当前材料。')
     }
     const workspaceId = activeWorkAreaId
     const conversationId = activeConversationId
@@ -493,7 +559,7 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
       setError(t('reasoningImageUnsupported'))
       return
     }
-    const actionLabel = instruction || ({ translate: t('translate'), explain: t('explain'), insight: t('insight'), summarize: t('summarize'), custom: 'AI' }[action])
+    const actionLabel = (requestedSkillId ? skills.find((skill) => skill.id === requestedSkillId)?.name : effectiveInstruction) || ({ translate: t('translate'), explain: t('explain'), insight: t('insight'), summarize: t('summarize'), custom: 'AI' }[action])
     const userLabel = `${targetIsDocument ? t('documentScope') : t('selectedScope')} · ${actionLabel}`
     const targetText = targetIsDocument ? (documentText || source.name) : (selectedText || `视觉选区 · ${selections.flatMap((item) => item.images).length} 张图片`)
     const userMessage: ChatMessage = { id: makeId(), role: 'user', content: targetText, label: userLabel }
@@ -516,7 +582,7 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
           action,
           selectedText: targetIsDocument ? '' : selectedText,
           documentText: context,
-          instruction,
+          instruction: effectiveInstruction,
           includeContext: true,
           history: previousHistory.map(({ role, content }) => ({ role, content })),
           aiConfig,
@@ -524,11 +590,13 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
           responseLanguage: pack.aiLanguage,
           selectionHasImages: selectionImages.length > 0,
           selectionImages: aiConfig.visionEnabled ? selectionImages : [],
+          skills: skills.map(({ id, name, command, description, instructions }) => ({ id, name, command, description, instructions })),
+          requestedSkillId,
         }),
       })
       const data = await response.json()
       if (!response.ok) throw new Error(data.error || t('requestFailed'))
-      const assistantMessage: ChatMessage = { id: makeId(), role: 'assistant', content: data.content }
+      const assistantMessage: ChatMessage = { id: makeId(), role: 'assistant', content: data.content, label: data.skillName ? `${t('skillUsed')} · ${data.skillName}` : undefined }
       updateConversationRoute(workspaceId, conversationId, (conversation) => ({ ...conversation, history: [...conversation.history, assistantMessage] }))
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : t('processFailed')
@@ -581,7 +649,6 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
         <button className="brand" onClick={showHome} title={t('home')}><div className="brand-mark"><BookOpen size={21} /></div><span>Reading Assistant</span></button>
         <div className="workspace-tabs">{workAreas.map((area) => <button key={area.id} className={!homeVisible && activeWorkAreaId === area.id ? 'active' : ''} onClick={() => openWorkArea(area.id)} title={area.source.name}>{Array.from(aiTasks).some((key) => key.startsWith(`${area.id}:`)) ? <LoaderCircle className="spin" size={13} /> : <FileText size={13} />}<span>{area.source.name}</span><i onClick={(event) => closeWorkArea(event, area.id)} title={t('closeTab')}><X size={12} /></i></button>)}</div>
         <div className="top-actions">
-          <select className="language-select" aria-label={t('language')} value={pack.code} onChange={(event) => { localStorage.setItem('reading-assistant-language', event.target.value); onLanguageChange(event.target.value) }}>{getLanguagePacks().map((item) => <option key={item.code} value={item.code}>{item.label}</option>)}</select>
           <label className="compact-upload" title={t('openFile')}><Upload size={17} /><input hidden type="file" accept="application/pdf,image/*" onChange={(e) => e.target.files?.[0] && openFile(e.target.files[0])} /></label>
           <button className="icon-button" onClick={() => setDark((value) => !value)} title={dark ? t('light') : t('dark')}>{dark ? <Sun size={18} /> : <Moon size={18} />}</button>
           {source && <button className="icon-button mobile-panel-toggle" onClick={() => setPanelOpen((value) => !value)}>{panelOpen ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}</button>}
@@ -675,7 +742,7 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
                   <div className="user-event" key={message.id}><span>{message.label}</span><small>{message.content.slice(0, 80)}{message.content.length > 80 ? '…' : ''}</small></div>
                 ) : (
                   <article className="answer-card" key={message.id}>
-                    <div className="answer-heading"><span><Sparkles size={15} /> {t('aiAnalysis')}</span><button onClick={() => navigator.clipboard.writeText(message.content)} title={t('copy')}><Copy size={14} /></button></div>
+                    <div className="answer-heading"><span><Sparkles size={15} /> {message.label || t('aiAnalysis')}</span><button onClick={() => navigator.clipboard.writeText(message.content)} title={t('copy')}><Copy size={14} /></button></div>
                     <div className="markdown"><ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>{normalizeAssistantMarkdown(message.content)}</ReactMarkdown></div>
                   </article>
                 ))}
@@ -686,8 +753,9 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
               </div>
               <div className="prompt-area">
                 {!aiConfig.apiKey && !configured && <button className="config-warning" onClick={() => setSettingsOpen(true)}>{t('notConfigured')}</button>}
+                {skillSuggestions.length > 0 && <div className="skill-command-menu">{skillSuggestions.map((skill) => <button key={skill.id} onClick={() => setCustomPrompt(`/${skill.command} `)}><Puzzle size={14} /><span><strong>/{skill.command}</strong><small>{skill.name}</small></span></button>)}</div>}
                 <div className="prompt-box"><textarea value={customPrompt} onChange={(e) => setCustomPrompt(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (customPrompt.trim()) runAi('custom', customPrompt.trim()) } }} placeholder={scope === 'document' ? t('promptDocument') : t('promptSelection')} /><button disabled={!!busy || currentAiBusy || !customPrompt.trim() || (scope === 'selection' && !selectionReady)} onClick={() => runAi('custom', customPrompt.trim())}><Send size={17} /></button></div>
-                <small className="prompt-hint">{t('sendHint')}</small>
+                <small className="prompt-hint">{t('sendHint')} · <button onClick={() => setCustomPrompt('/')}>{t('chooseSkillHint')}</button></small>
               </div>
             </> : <button className="collapsed-panel-button right" onClick={() => setPanelOpen(true)} title="展开 AI 助手"><ChevronLeft size={17} /></button>}
           </aside>
@@ -696,7 +764,14 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
       {settingsOpen && <AiSettingsModal
           value={aiConfig}
           serverConfigured={Boolean(configured)}
+          skills={skills}
+          language={pack.code}
+          languages={getLanguagePacks()}
           onClose={() => setSettingsOpen(false)}
+          onImportSkill={importSkillFolder}
+          onRemoveSkill={removeSkill}
+          onImportLanguage={importLanguageFolder}
+          onLanguageChange={changeLanguage}
           onSave={(config) => {
             setAiConfig(config)
             if (!config.reasoningEnabled) setDeepThinking(false)
