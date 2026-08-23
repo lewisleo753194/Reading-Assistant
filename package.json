@@ -1,0 +1,88 @@
+{
+  "name": "reading-assistant",
+  "description": "支持 PDF、图片、区域选择与视觉 AI 分析的桌面阅读助手",
+  "author": "xyLee",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lxymol/Reading-Assistant.git"
+  },
+  "bugs": {
+    "url": "https://github.com/lxymol/Reading-Assistant/issues"
+  },
+  "homepage": "https://github.com/lxymol/Reading-Assistant#readme",
+  "engines": {
+    "node": ">=20"
+  },
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "main": "electron/main.mjs",
+  "scripts": {
+    "dev": "concurrently -k \"vite\" \"node --watch server/index.mjs\"",
+    "build": "tsc -b && vite build",
+    "preview": "node server/index.mjs",
+    "lint": "eslint .",
+    "desktop": "npm run build && electron .",
+    "desktop:test": "npm run build && electron . --development-instance",
+    "desktop:pack": "npm run build && electron-builder --win nsis",
+    "desktop:dir": "npm run build && electron-builder --win dir"
+  },
+  "build": {
+    "appId": "cn.lxymol.readingassistant",
+    "productName": "Reading Assistant",
+    "asar": true,
+    "electronDist": "node_modules/electron/dist",
+    "directories": {
+      "output": "release-0.1.0"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "server/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": "nsis",
+      "artifactName": "Reading-Assistant-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  },
+  "dependencies": {
+    "dotenv": "latest",
+    "express": "latest",
+    "katex": "^0.18.4",
+    "lucide-react": "latest",
+    "pdfjs-dist": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "react-markdown": "latest",
+    "rehype-katex": "^7.0.1",
+    "remark-gfm": "^4.0.1",
+    "remark-math": "^6.0.0",
+    "tesseract.js": "latest"
+  },
+  "devDependencies": {
+    "@eslint/js": "latest",
+    "@types/express": "latest",
+    "@types/node": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "@vitejs/plugin-react": "latest",
+    "concurrently": "latest",
+    "electron": "^43.4.1",
+    "electron-builder": "^26.15.3",
+    "eslint": "latest",
+    "eslint-plugin-react-hooks": "latest",
+    "eslint-plugin-react-refresh": "latest",
+    "globals": "latest",
+    "typescript": "latest",
+    "typescript-eslint": "latest",
+    "vite": "latest"
+  }
+}

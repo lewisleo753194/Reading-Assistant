@@ -1,0 +1,13 @@
+node_modules
+dist
+release*/
+.cleanup-old-releases.ps1
+.vite/
+*.tsbuildinfo
+.env
+.env.local
+.env.*.local
+*.log
+.DS_Store
+.idea/
+.vscode/
