@@ -88,7 +88,7 @@ async function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      preload: path.join(dirname, 'preload.mjs'),
+      preload: path.join(dirname, 'preload.cjs'),
     },
   })
 
@@ -106,6 +106,9 @@ async function createWindow() {
     }
   })
   await mainWindow.loadURL(`http://127.0.0.1:${started.port}`)
+  const importBridgeReady = await mainWindow.webContents.executeJavaScript("Boolean(window.readingAssistant?.selectSkillFolder && window.readingAssistant?.selectLanguageFolder)")
+  logStartup(`Folder import bridge ready: ${importBridgeReady}`)
+  console.log(`Reading Assistant folder import bridge: ${importBridgeReady ? 'ready' : 'unavailable'}`)
   logStartup('Reader interface loaded')
 }
 

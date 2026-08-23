@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+const { contextBridge, ipcRenderer } = require('electron')
 
 contextBridge.exposeInMainWorld('readingAssistant', {
   selectSkillFolder: () => ipcRenderer.invoke('reading-assistant:select-skill-folder'),
