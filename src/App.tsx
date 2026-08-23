@@ -487,6 +487,12 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
     const taskKey = `${workspaceId}:${conversationId}`
     if (aiTasks.has(taskKey)) return
     const targetIsDocument = scope === 'document'
+    const selectionImages = targetIsDocument ? [] : selections.flatMap((item) => item.images).slice(0, 4)
+    const reasoningActive = deepThinking && aiConfig.reasoningEnabled
+    if (reasoningActive && selectionImages.length > 0) {
+      setError(t('reasoningImageUnsupported'))
+      return
+    }
     const actionLabel = instruction || ({ translate: t('translate'), explain: t('explain'), insight: t('insight'), summarize: t('summarize'), custom: 'AI' }[action])
     const userLabel = `${targetIsDocument ? t('documentScope') : t('selectedScope')} · ${actionLabel}`
     const targetText = targetIsDocument ? (documentText || source.name) : (selectedText || `视觉选区 · ${selections.flatMap((item) => item.images).length} 张图片`)
@@ -514,11 +520,10 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
           includeContext: true,
           history: previousHistory.map(({ role, content }) => ({ role, content })),
           aiConfig,
-          deepThinking: deepThinking && aiConfig.reasoningEnabled,
+          deepThinking: reasoningActive,
           responseLanguage: pack.aiLanguage,
-          selectionImages: !targetIsDocument && aiConfig.visionEnabled
-            ? selections.flatMap((item) => item.images).slice(0, 4)
-            : [],
+          selectionHasImages: selectionImages.length > 0,
+          selectionImages: aiConfig.visionEnabled ? selectionImages : [],
         }),
       })
       const data = await response.json()

@@ -75,7 +75,11 @@ app.post('/api/ai', async (req, res) => {
   const selectionImages = Array.isArray(req.body?.selectionImages)
     ? req.body.selectionImages.filter((value) => typeof value === 'string' && /^data:image\/(png|jpeg|webp);base64,/.test(value)).slice(0, 4)
     : []
+  const selectionHasImages = Boolean(req.body?.selectionHasImages || selectionImages.length)
   const reasoningRequested = Boolean(req.body?.deepThinking && req.body?.aiConfig?.reasoningEnabled)
+  if (reasoningRequested && selectionHasImages) {
+    return res.status(400).json({ error: '当前深度思考模式不能处理图片选区。请关闭“深度思考”后重试，应用将改用视觉模型。' })
+  }
   const hasTextInput = Boolean(String(selectedText).trim() || String(documentText).trim())
   const useReasoning = reasoningRequested && hasTextInput
   const useVision = Boolean(req.body?.aiConfig?.visionEnabled && selectionImages.length && !useReasoning)
