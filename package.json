@@ -15,7 +15,7 @@
     "node": ">=20"
   },
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "main": "electron/main.mjs",
   "scripts": {
@@ -34,7 +34,7 @@
     "asar": true,
     "electronDist": "node_modules/electron/dist",
     "directories": {
-      "output": "release-0.1.0"
+      "output": "release-0.2.0"
     },
     "files": [
       "dist/**/*",

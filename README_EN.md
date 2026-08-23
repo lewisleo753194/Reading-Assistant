@@ -3,7 +3,7 @@
 [中文](README.md) | [English](README_EN.md)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-![Version](https://img.shields.io/badge/version-0.1.0-6b7cff)
+![Version](https://img.shields.io/badge/version-0.2.0-6b7cff)
 ![Platform](https://img.shields.io/badge/platform-Windows-0078d4)
 
 Reading Assistant is an AI-assisted PDF and image reader for papers, textbooks, and technical documents. It combines continuous PDF reading, text selection, cross-page area capture, OCR, document-aware conversations, and user-configured OpenAI Chat Completions-compatible models.
@@ -29,7 +29,7 @@ Reading Assistant is an AI-assisted PDF and image reader for papers, textbooks, 
 
 Windows users can download the latest installer from [GitHub Releases](https://github.com/lxymol/Reading-Assistant/releases). The installer does not modify system environment variables and does not require a separate Node.js installation.
 
-Current version: `0.1.0`.
+Current version: `0.2.0`.
 
 ## AI configuration
 
@@ -78,7 +78,7 @@ npm run build
 npm run desktop:pack
 ```
 
-The Windows NSIS installer is written to `release-0.1.0/`. Release artifacts are ignored by Git and should be uploaded through GitHub Releases instead of committed to source history.
+The Windows NSIS installer is written to `release-0.2.0/`. Release artifacts are ignored by Git and should be uploaded through GitHub Releases instead of committed to source history.
 
 ## Privacy and security
 

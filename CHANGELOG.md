@@ -2,6 +2,27 @@
 
 All notable changes to Reading Assistant are documented here.
 
+## [0.2.0] - 2026-08-24
+
+### Added
+
+- Unified Model, Skill, and Language settings tabs.
+- Importable Skills from folders containing `SKILL.md`.
+- Automatic Skill routing and explicit `/skill-command` selection.
+- Importable language packs from folders containing `language.json`.
+- Desktop folder selection through a secure Electron preload bridge.
+
+### Improved
+
+- Stable settings window size across all tabs.
+- Language selection now controls the interface, AI responses, and translation targets.
+- Skill instructions are injected only after a Skill is selected.
+
+### Fixed
+
+- Image selections are no longer silently discarded when using a text-only deep-thinking model.
+- Desktop folder import now works correctly in Electron sandbox mode.
+
 ## [0.1.0] - 2026-08-24
 
 ### Added
