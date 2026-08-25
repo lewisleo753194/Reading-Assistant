@@ -45,6 +45,11 @@ export type ImportedSkill = {
   sourcePath: string
 }
 
+export type MemorySettings = {
+  fileMemoryEnabled: boolean
+  userMemoryEnabled: boolean
+}
+
 export type FolderImportResult = {
   canceled?: boolean
   folderPath?: string

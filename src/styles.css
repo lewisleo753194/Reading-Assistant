@@ -252,7 +252,7 @@ button:disabled { opacity: .38; cursor: not-allowed; }
 :root[data-theme='dark'] .config-warning { background: #413716; color: #f0d87b; }
 .prompt-box { display: flex; align-items: flex-end; gap: 8px; padding: 7px 7px 7px 11px; border: 1px solid var(--line); border-radius: 11px; background: var(--paper); }
 .prompt-box:focus-within { border-color: var(--text); }
-.prompt-box textarea { flex: 1; height: 38px; max-height: 100px; padding: 8px 0; resize: none; border: 0; outline: 0; color: var(--text); background: transparent; font-size: 12px; }
+.prompt-box textarea { flex: 1; height: 62px; min-height: 38px; max-height: 40vh; padding: 8px 4px 8px 0; resize: vertical; border: 0; outline: 0; color: var(--text); background: transparent; font-size: 12px; }
 .prompt-box button { width: 32px; height: 32px; display: grid; place-items: center; border: 0; border-radius: 8px; color: var(--accent-ink); background: var(--accent); cursor: pointer; }
 .prompt-hint { display: block; margin-top: 5px; text-align: center; color: var(--muted); font-size: 8px; }
 .prompt-hint button { padding: 0; border: 0; color: inherit; background: transparent; font: inherit; cursor: pointer; }
@@ -265,7 +265,7 @@ button:disabled { opacity: .38; cursor: not-allowed; }
 .skill-command-menu small { overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .reopen-panel { position: absolute; z-index: 15; right: 16px; top: 64px; padding: 9px 12px; display: flex; align-items: center; gap: 7px; border: 0; border-radius: 10px; color: var(--accent-ink); background: var(--accent); box-shadow: var(--shadow); font-weight: 700; cursor: pointer; }
 .modal-backdrop { position: fixed; inset: 0; z-index: 100; padding: 20px; display: grid; place-items: center; background: rgba(14, 15, 12, .58); backdrop-filter: blur(7px); }
-.settings-modal { width: min(680px, 100%); height: min(540px, calc(100vh - 40px)); display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--line); border-radius: 18px; background: var(--panel); box-shadow: 0 28px 90px rgba(0,0,0,.28); }
+.settings-modal { width: min(680px, 100%); height: min(620px, calc(100vh - 40px)); display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--line); border-radius: 18px; background: var(--panel); box-shadow: 0 28px 90px rgba(0,0,0,.28); }
 .settings-heading { padding: 20px; display: grid; flex: none; grid-template-columns: auto 1fr auto; align-items: center; gap: 12px; border-bottom: 1px solid var(--line); }
 .settings-icon { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 12px; color: var(--accent-ink); background: var(--accent); }
 .settings-heading span { color: var(--muted); font-size: 9px; font-weight: 700; letter-spacing: .12em; }
@@ -322,6 +322,23 @@ button:disabled { opacity: .38; cursor: not-allowed; }
 .language-list span { font-size: 11px; font-weight: 700; }
 .language-list small { color: var(--muted); font-size: 9px; }
 .language-list svg { grid-column: 2; grid-row: 1 / span 2; color: var(--text); }
+.memory-settings { display: grid; gap: 14px; }
+.memory-card { padding: 14px; border: 1px solid var(--line); border-radius: 11px; background: var(--soft); }
+.memory-card .vision-toggle small { max-width: 520px; line-height: 1.45; }
+.memory-section-heading { margin-top: 14px; padding-top: 12px; display: flex; align-items: center; justify-content: space-between; border-top: 1px solid var(--line); color: var(--muted); font-size: 9px; font-weight: 700; }
+.memory-section-heading button, .memory-editor-footer button { padding: 4px 6px; display: flex; align-items: center; gap: 4px; border: 0; border-radius: 6px; color: #a53931; background: transparent; font-size: 9px; cursor: pointer; }
+.memory-section-heading button:hover, .memory-editor-footer button:hover { background: var(--paper); }
+.memory-file-list { max-height: 150px; margin-top: 8px; display: grid; gap: 6px; overflow-y: auto; }
+.memory-file-list article { padding: 8px; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); }
+.memory-file-list article > div { min-width: 0; display: grid; gap: 2px; }
+.memory-file-list strong { overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.memory-file-list small { color: var(--muted); font-size: 8px; }
+.memory-file-list article > button { width: 27px; height: 27px; display: grid; place-items: center; border: 0; border-radius: 6px; color: var(--muted); background: transparent; cursor: pointer; }
+.memory-file-list article > button:hover { color: #a53931; background: var(--soft); }
+.memory-empty { padding: 24px 10px; color: var(--muted); text-align: center; font-size: 9px; }
+.user-memory-editor { width: 100%; min-height: 120px; margin-top: 14px; padding: 10px; resize: vertical; border: 1px solid var(--line); border-radius: 9px; outline: 0; color: var(--text); background: var(--paper); font: inherit; font-size: 10px; line-height: 1.55; }
+.user-memory-editor:focus { border-color: var(--text); }
+.memory-editor-footer { margin-top: 5px; display: flex; align-items: center; justify-content: space-between; color: var(--muted); font-size: 8px; }
 .secondary-button, .save-button { min-height: 38px; padding: 0 15px; display: flex; align-items: center; justify-content: center; gap: 6px; border-radius: 9px; font-size: 11px; font-weight: 700; cursor: pointer; }
 .secondary-button { border: 1px solid var(--line); background: var(--paper); }
 .save-button { border: 0; color: var(--accent-ink); background: var(--accent); }

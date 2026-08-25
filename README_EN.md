@@ -24,6 +24,9 @@ Reading Assistant is an AI-assisted PDF and image reader for papers, textbooks, 
 - Persistent light and dark themes for both the interface and document pages.
 - Built-in Chinese and English UI; the selected language also controls AI responses and translation targets.
 - On-demand rendering around the current page to reduce memory use for large PDFs.
+- A vertically resizable AI prompt; adding a selection no longer forces a collapsed selection sidebar open.
+- Optional file memory restores conversations, page position, and reading state when the same file is reopened.
+- Optional user memory learns stable background and response preferences and remains viewable, editable, and removable.
 
 ## Installation
 
@@ -55,6 +58,13 @@ When an image selection and Deep thinking are both active, the app asks the user
 - In **Settings → Language settings**, import a folder containing `language.json`. A pack must define `code`, `label`, `aiLanguage`, and `strings`.
 - The selected language controls the UI, AI response language, and translation target language.
 
+## Memory
+
+- Enable or disable File memory and User memory independently under **Settings → Memory settings**.
+- File memory uses local IndexedDB and stores only conversations and reading state, never the PDF or image itself. Records can be removed individually or all at once.
+- User memory is stored locally. Its extraction uses the configured default AI model and personalizes explanation depth, wording, and formatting.
+- The profile can be edited or cleared directly. When User memory is off, the profile is neither sent to AI nor updated automatically.
+
 ## Run from source
 
 Node.js 20 or later is required.
@@ -84,6 +94,7 @@ The Windows NSIS installer is written to `release-0.2.0/`. Release artifacts are
 
 - PDF and image processing runs locally through PDF.js and Tesseract.js.
 - A configured AI service receives data only after an AI action: relevant selections, required document context, recent conversation messages, and up to four visual crops when applicable.
+- When User memory is enabled, the current request and assistant response are sent to the default model to update the profile; document source text is not used as profile-learning material.
 - API settings are stored in the application's local data directory. They are not included in the repository or installer, but they are not protected by an operating-system credential vault. Use trusted devices only.
 - `.env` files and local build outputs are ignored by Git. Run a secret scan before publishing and verify that no key was staged accidentally.
 

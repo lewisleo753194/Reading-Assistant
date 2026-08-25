@@ -2,6 +2,20 @@
 
 All notable changes to Reading Assistant are documented here.
 
+## [Unreleased]
+
+### Added
+
+- Optional IndexedDB-backed file memory for conversations, page position, zoom, and reading state.
+- Optional AI-maintained user memory with in-app viewing, editing, and deletion.
+- A dedicated Memory settings tab with independent controls and file-memory management.
+
+### Improved
+
+- The AI prompt can be resized vertically.
+- The settings window is taller while retaining a stable size across tabs.
+- New selections respect a collapsed selection sidebar.
+
 ## [0.2.0] - 2026-08-24
 
 ### Added

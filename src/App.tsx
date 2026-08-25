@@ -15,15 +15,17 @@ import DropZone from './components/DropZone'
 import DocumentViewer from './components/DocumentViewer'
 import AiSettingsModal from './components/AiSettingsModal'
 import { extractPdfRegionText, extractPdfText, getSampledPageNumbers } from './lib/pdf'
-import type { AiConfig, ChatMessage, ImportedSkill, SelectionResult, SourceFile } from './types'
+import type { AiConfig, ChatMessage, ImportedSkill, MemorySettings, SelectionResult, SourceFile } from './types'
 import { getLanguagePacks, registerLanguagePack, useI18n, type AppLanguage, type LanguagePack } from './i18n'
 import { parseLanguageImport, parseSkillImport } from './lib/imports'
+import { clearFileMemories, deleteFileMemory, getFileMemory, getFileMemoryId, listFileMemories, saveFileMemory, type FileMemoryRecord, type FileMemorySummary } from './lib/memory'
 
 type AiAction = 'translate' | 'explain' | 'insight' | 'summarize' | 'custom'
 type CapturedSelection = SelectionResult & { id: string; text: string; textParts: string[]; loading: boolean }
 type Conversation = { id: string; title: string; history: ChatMessage[] }
 type WorkArea = {
   id: string
+  memoryKey: string
   source: SourceFile
   pdf: PDFDocumentProxy | null
   documentText: string
@@ -40,6 +42,7 @@ type WorkArea = {
 type OcrWorker = Awaited<ReturnType<typeof createWorker>>
 
 const makeId = () => crypto.randomUUID()
+const getCurrentTimestamp = () => Date.now()
 const normalizeAssistantMarkdown = (content: string) => content
   .replace(/```(?:latex|tex)\s*([\s\S]*?)```/gi, (_match, formula: string) => `\n$$\n${formula.trim()}\n$$\n`)
   .replace(/\\\[([\s\S]*?)\\\]/g, (_match, formula: string) => `\n$$\n${formula.trim()}\n$$\n`)
@@ -68,6 +71,16 @@ const loadAiConfig = (): AiConfig => {
 }
 
 const loadDarkTheme = () => localStorage.getItem('reading-assistant-theme') === 'dark'
+const defaultMemorySettings: MemorySettings = { fileMemoryEnabled: true, userMemoryEnabled: false }
+const loadMemorySettings = (): MemorySettings => {
+  try {
+    const saved = JSON.parse(localStorage.getItem('reading-assistant-memory-settings') || '{}')
+    return { ...defaultMemorySettings, ...saved }
+  } catch {
+    return defaultMemorySettings
+  }
+}
+const loadUserMemory = () => localStorage.getItem('reading-assistant-user-memory') || ''
 const loadSkills = (): ImportedSkill[] => {
   try {
     const value = JSON.parse(localStorage.getItem('reading-assistant-skills') || '[]')
@@ -109,6 +122,9 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [aiConfig, setAiConfig] = useState<AiConfig>(loadAiConfig)
   const [skills, setSkills] = useState<ImportedSkill[]>(loadSkills)
+  const [memorySettings, setMemorySettings] = useState<MemorySettings>(loadMemorySettings)
+  const [userMemory, setUserMemory] = useState(loadUserMemory)
+  const [fileMemorySummaries, setFileMemorySummaries] = useState<FileMemorySummary[]>([])
   const [deepThinking, setDeepThinking] = useState(false)
   const hasVisualSelection = aiConfig.visionEnabled && selections.some((item) => item.images.length > 0)
   const selectionReady = Boolean(selectedText || hasVisualSelection)
@@ -124,6 +140,10 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
   const activeConversationIdRef = useRef(activeConversationId)
   const selectionsRef = useRef<CapturedSelection[]>([])
   const pendingPageRestoreRef = useRef<number | null>(null)
+  const userMemoryRef = useRef(userMemory)
+  const memorySettingsRef = useRef(memorySettings)
+  const memoryUpdateQueueRef = useRef<Promise<void>>(Promise.resolve())
+  const forgottenFileKeysRef = useRef(new Set<string>())
   const currentAiTaskKey = activeWorkAreaId ? `${activeWorkAreaId}:${activeConversationId}` : ''
   const currentAiBusy = aiTasks.has(currentAiTaskKey)
   const slashSkillQuery = customPrompt.match(/^\/([^\s]*)$/)?.[1].toLocaleLowerCase()
@@ -166,6 +186,76 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
   }, [dark])
 
   useEffect(() => {
+    memorySettingsRef.current = memorySettings
+    localStorage.setItem('reading-assistant-memory-settings', JSON.stringify(memorySettings))
+  }, [memorySettings])
+
+  useEffect(() => {
+    userMemoryRef.current = userMemory
+    localStorage.setItem('reading-assistant-user-memory', userMemory)
+  }, [userMemory])
+
+  const refreshFileMemorySummaries = useCallback(async () => {
+    try { setFileMemorySummaries(await listFileMemories()) } catch { setFileMemorySummaries([]) }
+  }, [])
+
+  const openSettings = () => {
+    setSettingsOpen(true)
+    void refreshFileMemorySummaries()
+  }
+
+  useEffect(() => {
+    if (!memorySettings.fileMemoryEnabled || !source) return
+    const memoryKey = getFileMemoryId(source.file)
+    if (forgottenFileKeysRef.current.has(memoryKey)) return
+    const timer = window.setTimeout(() => {
+      const syncedConversations = conversations.map((item) => item.id === activeConversationId ? { ...item, history } : item)
+      const record: FileMemoryRecord = {
+        id: memoryKey,
+        fileName: source.file.name,
+        fileSize: source.file.size,
+        fileType: source.file.type,
+        lastModified: source.file.lastModified,
+        updatedAt: getCurrentTimestamp(),
+        conversations: syncedConversations,
+        activeConversationId,
+        currentPage,
+        zoom,
+        areaSelectionEnabled,
+        scope,
+      }
+      void saveFileMemory(record).then(refreshFileMemorySummaries).catch(() => undefined)
+    }, 700)
+    return () => window.clearTimeout(timer)
+  }, [memorySettings.fileMemoryEnabled, source, conversations, activeConversationId, history, currentPage, zoom, areaSelectionEnabled, scope, refreshFileMemorySummaries])
+
+  useEffect(() => {
+    if (!memorySettings.fileMemoryEnabled) return
+    const inactiveAreas = workAreas.filter((area) => area.id !== activeWorkAreaId && !forgottenFileKeysRef.current.has(area.memoryKey))
+    if (!inactiveAreas.length) return
+    const timer = window.setTimeout(() => {
+      inactiveAreas.forEach((area) => {
+        const record: FileMemoryRecord = {
+          id: area.memoryKey,
+          fileName: area.source.file.name,
+          fileSize: area.source.file.size,
+          fileType: area.source.file.type,
+          lastModified: area.source.file.lastModified,
+          updatedAt: getCurrentTimestamp(),
+          conversations: area.conversations,
+          activeConversationId: area.activeConversationId,
+          currentPage: area.currentPage,
+          zoom: area.zoom,
+          areaSelectionEnabled: area.areaSelectionEnabled,
+          scope: area.scope,
+        }
+        void saveFileMemory(record).catch(() => undefined)
+      })
+    }, 700)
+    return () => window.clearTimeout(timer)
+  }, [memorySettings.fileMemoryEnabled, workAreas, activeWorkAreaId])
+
+  useEffect(() => {
     fetch('/api/health').then((r) => r.json()).then((data) => setConfigured(data.configured)).catch(() => setConfigured(false))
   }, [])
 
@@ -177,7 +267,7 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
   }, [history, busy])
 
   const snapshotCurrent = (): WorkArea | null => source && activeWorkAreaId ? {
-    id: activeWorkAreaId, source, pdf, documentText, selectedText, selections,
+    id: activeWorkAreaId, memoryKey: getFileMemoryId(source.file), source, pdf, documentText, selectedText, selections,
     conversations: conversations.map((item) => item.id === activeConversationId ? { ...item, history } : item),
     activeConversationId, customPrompt,
     zoom, currentPage, areaSelectionEnabled, scope,
@@ -200,18 +290,33 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
     if (snapshot) setWorkAreas((items) => items.map((item) => item.id === snapshot.id ? snapshot : item))
   }
 
-  const openFile = (file: File) => {
+  const openFile = async (file: File) => {
     if (!(file.type === 'application/pdf' || file.type.startsWith('image/'))) {
       setError(t('invalidFile'))
       return
     }
+    const memoryKey = getFileMemoryId(file)
+    const alreadyOpen = workAreas.find((area) => area.memoryKey === memoryKey)
+    if (alreadyOpen) {
+      openWorkArea(alreadyOpen.id)
+      return
+    }
     const snapshot = snapshotCurrent()
     const id = makeId()
+    let remembered: FileMemoryRecord | undefined
+    if (memorySettings.fileMemoryEnabled) {
+      try { remembered = await getFileMemory(memoryKey) } catch { remembered = undefined }
+    }
+    forgottenFileKeysRef.current.delete(memoryKey)
     const conversation: Conversation = { id: makeId(), title: t('untitledConversation'), history: [] }
+    const restoredConversations = remembered?.conversations?.length ? remembered.conversations : [conversation]
+    const restoredActiveConversationId = restoredConversations.some((item) => item.id === remembered?.activeConversationId)
+      ? remembered!.activeConversationId
+      : restoredConversations[0].id
     const next: WorkArea = {
-      id, source: { name: file.name, kind: file.type === 'application/pdf' ? 'pdf' : 'image', url: URL.createObjectURL(file), file },
-      pdf: null, documentText: '', selectedText: '', selections: [], conversations: [conversation], activeConversationId: conversation.id, customPrompt: '', zoom: 1,
-      currentPage: 1, areaSelectionEnabled: false, scope: 'selection',
+      id, memoryKey, source: { name: file.name, kind: file.type === 'application/pdf' ? 'pdf' : 'image', url: URL.createObjectURL(file), file },
+      pdf: null, documentText: '', selectedText: '', selections: [], conversations: restoredConversations, activeConversationId: restoredActiveConversationId, customPrompt: '', zoom: remembered?.zoom || 1,
+      currentPage: remembered?.currentPage || 1, areaSelectionEnabled: remembered?.areaSelectionEnabled || false, scope: remembered?.scope || 'selection',
     }
     setWorkAreas((items) => [...items.map((item) => snapshot && item.id === snapshot.id ? snapshot : item), next])
     setActiveWorkAreaId(id)
@@ -236,7 +341,24 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
 
   const closeWorkArea = (event: ReactMouseEvent, id: string) => {
     event.stopPropagation()
-    const target = workAreas.find((item) => item.id === id)
+    const target = id === activeWorkAreaId ? snapshotCurrent() : workAreas.find((item) => item.id === id)
+    if (target && memorySettings.fileMemoryEnabled && !forgottenFileKeysRef.current.has(target.memoryKey)) {
+      const record: FileMemoryRecord = {
+        id: target.memoryKey,
+        fileName: target.source.file.name,
+        fileSize: target.source.file.size,
+        fileType: target.source.file.type,
+        lastModified: target.source.file.lastModified,
+        updatedAt: getCurrentTimestamp(),
+        conversations: target.conversations,
+        activeConversationId: target.activeConversationId,
+        currentPage: target.currentPage,
+        zoom: target.zoom,
+        areaSelectionEnabled: target.areaSelectionEnabled,
+        scope: target.scope,
+      }
+      void saveFileMemory(record).catch(() => undefined)
+    }
     if (target) URL.revokeObjectURL(target.source.url)
     const remaining = workAreas.filter((item) => item.id !== id)
     setWorkAreas(remaining)
@@ -384,7 +506,6 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
     const captured: CapturedSelection = { ...result, id: selectionId, text: '', textParts: result.images.map(() => ''), loading: true }
     setSelections((items) => { const next = [...items, captured]; selectionsRef.current = next; return next })
     setScope('selection')
-    setSelectionPanelOpen(true)
     setBusy('ocr')
     setError('')
     try {
@@ -529,6 +650,44 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
     onLanguageChange(language)
   }
 
+  const changeMemorySettings = (settings: MemorySettings) => setMemorySettings(settings)
+  const changeUserMemory = (value: string) => setUserMemory(value.slice(0, 12000))
+
+  const forgetFileMemory = async (id: string) => {
+    forgottenFileKeysRef.current.add(id)
+    await deleteFileMemory(id)
+    await refreshFileMemorySummaries()
+  }
+
+  const forgetAllFileMemories = async () => {
+    workAreas.forEach((area) => forgottenFileKeysRef.current.add(area.memoryKey))
+    await clearFileMemories()
+    await refreshFileMemorySummaries()
+  }
+
+  const learnUserMemory = (userRequest: string, assistantResponse: string) => {
+    if (!memorySettingsRef.current.userMemoryEnabled) return
+    memoryUpdateQueueRef.current = memoryUpdateQueueRef.current.then(async () => {
+      if (!memorySettingsRef.current.userMemoryEnabled) return
+      const response = await fetch('/api/ai/memory', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          aiConfig,
+          currentMemory: userMemoryRef.current,
+          userRequest,
+          assistantResponse,
+          responseLanguage: pack.aiLanguage,
+        }),
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!memorySettingsRef.current.userMemoryEnabled || !response.ok || typeof data.memory !== 'string') return
+      const nextMemory = data.memory.trim().slice(0, 12000)
+      userMemoryRef.current = nextMemory
+      setUserMemory(nextMemory)
+    }).catch(() => undefined)
+  }
+
   const runAi = async (action: AiAction, instruction = '') => {
     setError('')
     if (!source || !activeWorkAreaId) return
@@ -588,6 +747,7 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
           aiConfig,
           deepThinking: reasoningActive,
           responseLanguage: pack.aiLanguage,
+          userMemory: memorySettings.userMemoryEnabled ? userMemoryRef.current : '',
           selectionHasImages: selectionImages.length > 0,
           selectionImages: aiConfig.visionEnabled ? selectionImages : [],
           skills: skills.map(({ id, name, command, description, instructions }) => ({ id, name, command, description, instructions })),
@@ -598,6 +758,7 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
       if (!response.ok) throw new Error(data.error || t('requestFailed'))
       const assistantMessage: ChatMessage = { id: makeId(), role: 'assistant', content: data.content, label: data.skillName ? `${t('skillUsed')} · ${data.skillName}` : undefined }
       updateConversationRoute(workspaceId, conversationId, (conversation) => ({ ...conversation, history: [...conversation.history, assistantMessage] }))
+      learnUserMemory(effectiveInstruction || actionLabel, data.content)
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : t('processFailed')
       const errorMessage: ChatMessage = { id: makeId(), role: 'assistant', content: `⚠️ ${message}` }
@@ -612,7 +773,6 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
     setSelections((items) => { const next = [...items, { id: selectionId, image: '', images: [], page: currentPage, regions: [], text, textParts: [text], loading: false }]; selectionsRef.current = next; return next })
     setSelectedText((previous) => [previous, text].filter(Boolean).join('\n\n'))
     setScope('selection')
-    setSelectionPanelOpen(true)
     setPanelOpen(true)
   }
 
@@ -652,7 +812,7 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
           <label className="compact-upload" title={t('openFile')}><Upload size={17} /><input hidden type="file" accept="application/pdf,image/*" onChange={(e) => e.target.files?.[0] && openFile(e.target.files[0])} /></label>
           <button className="icon-button" onClick={() => setDark((value) => !value)} title={dark ? t('light') : t('dark')}>{dark ? <Sun size={18} /> : <Moon size={18} />}</button>
           {source && <button className="icon-button mobile-panel-toggle" onClick={() => setPanelOpen((value) => !value)}>{panelOpen ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}</button>}
-          <button className="icon-button" onClick={() => setSettingsOpen(true)} title={t('settings')}><Settings2 size={18} /></button>
+          <button className="icon-button" onClick={openSettings} title={t('settings')}><Settings2 size={18} /></button>
         </div>
       </header>
 
@@ -752,7 +912,7 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
               {error && <div className="error-banner"><X size={15} /><span>{error}</span></div>}
               </div>
               <div className="prompt-area">
-                {!aiConfig.apiKey && !configured && <button className="config-warning" onClick={() => setSettingsOpen(true)}>{t('notConfigured')}</button>}
+                {!aiConfig.apiKey && !configured && <button className="config-warning" onClick={openSettings}>{t('notConfigured')}</button>}
                 {skillSuggestions.length > 0 && <div className="skill-command-menu">{skillSuggestions.map((skill) => <button key={skill.id} onClick={() => setCustomPrompt(`/${skill.command} `)}><Puzzle size={14} /><span><strong>/{skill.command}</strong><small>{skill.name}</small></span></button>)}</div>}
                 <div className="prompt-box"><textarea value={customPrompt} onChange={(e) => setCustomPrompt(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (customPrompt.trim()) runAi('custom', customPrompt.trim()) } }} placeholder={scope === 'document' ? t('promptDocument') : t('promptSelection')} /><button disabled={!!busy || currentAiBusy || !customPrompt.trim() || (scope === 'selection' && !selectionReady)} onClick={() => runAi('custom', customPrompt.trim())}><Send size={17} /></button></div>
                 <small className="prompt-hint">{t('sendHint')} · <button onClick={() => setCustomPrompt('/')}>{t('chooseSkillHint')}</button></small>
@@ -767,11 +927,18 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
           skills={skills}
           language={pack.code}
           languages={getLanguagePacks()}
+          memorySettings={memorySettings}
+          userMemory={userMemory}
+          fileMemories={fileMemorySummaries}
           onClose={() => setSettingsOpen(false)}
           onImportSkill={importSkillFolder}
           onRemoveSkill={removeSkill}
           onImportLanguage={importLanguageFolder}
           onLanguageChange={changeLanguage}
+          onMemorySettingsChange={changeMemorySettings}
+          onUserMemoryChange={changeUserMemory}
+          onDeleteFileMemory={forgetFileMemory}
+          onDeleteAllFileMemories={forgetAllFileMemories}
           onSave={(config) => {
             setAiConfig(config)
             if (!config.reasoningEnabled) setDeepThinking(false)

@@ -1,10 +1,11 @@
-import { Bot, CheckCircle2, Eye, EyeOff, FolderOpen, Languages, LoaderCircle, Puzzle, Settings2, Trash2, X } from 'lucide-react'
+import { Bot, BrainCircuit, CheckCircle2, Database, Eye, EyeOff, FolderOpen, Languages, LoaderCircle, Puzzle, Settings2, Trash2, X } from 'lucide-react'
 import { useState } from 'react'
 import type { LanguagePack } from '../i18n'
 import { useI18n, type AppLanguage } from '../i18n'
-import type { AiConfig, ImportedSkill } from '../types'
+import type { AiConfig, ImportedSkill, MemorySettings } from '../types'
+import type { FileMemorySummary } from '../lib/memory'
 
-type SettingsTab = 'models' | 'skills' | 'language'
+type SettingsTab = 'models' | 'skills' | 'memory' | 'language'
 
 type Props = {
   value: AiConfig
@@ -12,15 +13,22 @@ type Props = {
   skills: ImportedSkill[]
   language: AppLanguage
   languages: LanguagePack[]
+  memorySettings: MemorySettings
+  userMemory: string
+  fileMemories: FileMemorySummary[]
   onClose: () => void
   onSave: (config: AiConfig) => void
   onImportSkill: () => Promise<boolean>
   onRemoveSkill: (id: string) => void
   onImportLanguage: () => Promise<boolean>
   onLanguageChange: (language: AppLanguage) => void
+  onMemorySettingsChange: (settings: MemorySettings) => void
+  onUserMemoryChange: (memory: string) => void
+  onDeleteFileMemory: (id: string) => Promise<void>
+  onDeleteAllFileMemories: () => Promise<void>
 }
 
-export default function AiSettingsModal({ value, serverConfigured, skills, language, languages, onClose, onSave, onImportSkill, onRemoveSkill, onImportLanguage, onLanguageChange }: Props) {
+export default function AiSettingsModal({ value, serverConfigured, skills, language, languages, memorySettings, userMemory, fileMemories, onClose, onSave, onImportSkill, onRemoveSkill, onImportLanguage, onLanguageChange, onMemorySettingsChange, onUserMemoryChange, onDeleteFileMemory, onDeleteAllFileMemories }: Props) {
   const { t, pack } = useI18n()
   const [tab, setTab] = useState<SettingsTab>('models')
   const [draft, setDraft] = useState(value)
@@ -79,6 +87,7 @@ export default function AiSettingsModal({ value, serverConfigured, skills, langu
       <nav className="settings-tabs">
         <button className={tab === 'models' ? 'active' : ''} onClick={() => { setTab('models'); setMessage(null) }}><Bot size={15} />{t('modelSettings')}</button>
         <button className={tab === 'skills' ? 'active' : ''} onClick={() => { setTab('skills'); setMessage(null) }}><Puzzle size={15} />{t('skillSettings')}</button>
+        <button className={tab === 'memory' ? 'active' : ''} onClick={() => { setTab('memory'); setMessage(null) }}><BrainCircuit size={15} />{t('memorySettings')}</button>
         <button className={tab === 'language' ? 'active' : ''} onClick={() => { setTab('language'); setMessage(null) }}><Languages size={15} />{t('languageSettings')}</button>
       </nav>
 
@@ -104,6 +113,19 @@ export default function AiSettingsModal({ value, serverConfigured, skills, langu
 
         {tab === 'skills' && <section className="import-settings"><div className="import-header"><div><h3>{t('skillSettings')}</h3><p>{t('skillImportHelp')}</p></div><button className="import-button" disabled={importing} onClick={() => runImport('skill')}>{importing ? <LoaderCircle className="spin" size={15} /> : <FolderOpen size={15} />}{t('importSkill')}</button></div>
           <div className="import-list">{skills.length ? skills.map((skill) => <article key={skill.id} className="import-card"><div><strong>{skill.name}</strong><code>/{skill.command}</code><p>{skill.description}</p><small>{skill.sourcePath}</small></div><button onClick={() => onRemoveSkill(skill.id)} title={t('removeSkill')}><Trash2 size={15} /></button></article>) : <div className="import-empty"><Puzzle size={24} /><p>{t('noSkills')}</p></div>}</div>
+        </section>}
+
+        {tab === 'memory' && <section className="memory-settings">
+          <section className="memory-card">
+            <label className="vision-toggle"><input type="checkbox" checked={memorySettings.fileMemoryEnabled} onChange={(event) => onMemorySettingsChange({ ...memorySettings, fileMemoryEnabled: event.target.checked })} /><span className="vision-switch" aria-hidden="true" /><span><strong>{t('fileMemory')}</strong><small>{t('fileMemoryHelp')}</small></span></label>
+            <div className="memory-section-heading"><span>{t('rememberedFiles')} · {fileMemories.length}</span>{fileMemories.length > 0 && <button onClick={() => { if (window.confirm(t('confirmDeleteAllFileMemory'))) void onDeleteAllFileMemories() }}><Trash2 size={13} />{t('deleteAll')}</button>}</div>
+            <div className="memory-file-list">{fileMemories.length ? fileMemories.map((memory) => <article key={memory.id}><Database size={15} /><div><strong>{memory.fileName}</strong><small>{memory.conversationCount} {t('memoryConversations')} · {new Date(memory.updatedAt).toLocaleString()}</small></div><button onClick={() => { if (window.confirm(t('confirmDeleteFileMemory'))) void onDeleteFileMemory(memory.id) }} title={t('deleteFileMemory')}><Trash2 size={14} /></button></article>) : <div className="memory-empty">{t('noFileMemory')}</div>}</div>
+          </section>
+          <section className="memory-card">
+            <label className="vision-toggle"><input type="checkbox" checked={memorySettings.userMemoryEnabled} onChange={(event) => onMemorySettingsChange({ ...memorySettings, userMemoryEnabled: event.target.checked })} /><span className="vision-switch" aria-hidden="true" /><span><strong>{t('userMemory')}</strong><small>{t('userMemoryHelp')}</small></span></label>
+            <textarea className="user-memory-editor" value={userMemory} onChange={(event) => onUserMemoryChange(event.target.value)} placeholder={t('userMemoryPlaceholder')} />
+            <div className="memory-editor-footer"><small>{userMemory.length} / 12000</small>{userMemory && <button onClick={() => { if (window.confirm(t('confirmClearUserMemory'))) onUserMemoryChange('') }}><Trash2 size={13} />{t('clearUserMemory')}</button>}</div>
+          </section>
         </section>}
 
         {tab === 'language' && <section className="import-settings"><div className="import-header"><div><h3>{t('languageSettings')}</h3><p>{t('languageImportHelp')}</p></div><button className="import-button" disabled={importing} onClick={() => runImport('language')}>{importing ? <LoaderCircle className="spin" size={15} /> : <FolderOpen size={15} />}{t('importLanguage')}</button></div>
