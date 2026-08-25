@@ -114,6 +114,8 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
   const [selectionPanelOpen, setSelectionPanelOpen] = useState(true)
   const [selectionPanelWidth, setSelectionPanelWidth] = useState(260)
   const [aiPanelWidth, setAiPanelWidth] = useState(390)
+  const [selectionSplit, setSelectionSplit] = useState(0.5)
+  const [promptHeight, setPromptHeight] = useState(78)
   const [busy, setBusy] = useState<'ocr' | 'extract' | ''>('')
   const [aiTasks, setAiTasks] = useState<Set<string>>(() => new Set())
   const [progress, setProgress] = useState('')
@@ -135,7 +137,13 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
   const panelScrollRef = useRef<HTMLDivElement>(null)
   const readerScrollRef = useRef<HTMLDivElement>(null)
   const scrollFrameRef = useRef<number | null>(null)
-  const resizeRef = useRef<{ panel: 'selection' | 'ai'; startX: number; startWidth: number } | null>(null)
+  const resizeRef = useRef<
+    | { kind: 'panel'; panel: 'selection' | 'ai'; startX: number; startWidth: number }
+    | { kind: 'selection-split'; startY: number; startRatio: number; containerHeight: number }
+    | { kind: 'prompt'; startY: number; startHeight: number }
+    | null
+  >(null)
+  const selectionBodyRef = useRef<HTMLDivElement>(null)
   const activeWorkAreaIdRef = useRef<string | null>(null)
   const activeConversationIdRef = useRef(activeConversationId)
   const selectionsRef = useRef<CapturedSelection[]>([])
@@ -153,27 +161,65 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
     const move = (event: PointerEvent) => {
       const resize = resizeRef.current
       if (!resize) return
-      const delta = event.clientX - resize.startX
-      if (resize.panel === 'selection') setSelectionPanelWidth(Math.max(210, Math.min(440, resize.startWidth + delta)))
-      if (resize.panel === 'ai') setAiPanelWidth(Math.max(300, Math.min(680, resize.startWidth - delta)))
+      if (resize.kind === 'panel') {
+        const delta = event.clientX - resize.startX
+        if (resize.panel === 'selection') setSelectionPanelWidth(Math.max(210, Math.min(440, resize.startWidth + delta)))
+        if (resize.panel === 'ai') setAiPanelWidth(Math.max(300, Math.min(680, resize.startWidth - delta)))
+      }
+      if (resize.kind === 'selection-split') {
+        const minimum = Math.min(0.42, 96 / resize.containerHeight)
+        const ratio = resize.startRatio + (event.clientY - resize.startY) / resize.containerHeight
+        setSelectionSplit(Math.max(minimum, Math.min(1 - minimum, ratio)))
+      }
+      if (resize.kind === 'prompt') {
+        const nextHeight = Math.max(54, Math.min(window.innerHeight * 0.45, resize.startHeight - (event.clientY - resize.startY)))
+        setPromptHeight(nextHeight)
+        window.requestAnimationFrame(() => {
+          const container = panelScrollRef.current
+          if (container) container.scrollTop = container.scrollHeight
+        })
+      }
     }
     const stop = () => {
       if (!resizeRef.current) return
       resizeRef.current = null
       document.body.classList.remove('resizing-panels')
+      document.body.classList.remove('resizing-vertical')
+      document.body.classList.remove('resizing-selection-split')
+      document.body.classList.remove('resizing-prompt')
     }
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', stop)
+    window.addEventListener('pointercancel', stop)
     return () => {
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', stop)
+      window.removeEventListener('pointercancel', stop)
     }
   }, [])
 
   const startResize = (panel: 'selection' | 'ai', startWidth: number, event: ReactPointerEvent) => {
     event.preventDefault()
-    resizeRef.current = { panel, startX: event.clientX, startWidth }
+    resizeRef.current = { kind: 'panel', panel, startX: event.clientX, startWidth }
     document.body.classList.add('resizing-panels')
+  }
+
+  const startSelectionSplitResize = (event: ReactPointerEvent) => {
+    const containerHeight = selectionBodyRef.current?.clientHeight || 0
+    if (!containerHeight) return
+    event.preventDefault()
+    resizeRef.current = { kind: 'selection-split', startY: event.clientY, startRatio: selectionSplit, containerHeight }
+    document.body.classList.add('resizing-vertical')
+    document.body.classList.add('resizing-selection-split')
+  }
+
+  const startPromptResize = (event: ReactPointerEvent) => {
+    event.preventDefault()
+    resizeRef.current = { kind: 'prompt', startY: event.clientY, startHeight: promptHeight }
+    document.body.classList.add('resizing-vertical')
+    document.body.classList.add('resizing-prompt')
+    const container = panelScrollRef.current
+    if (container) container.scrollTop = container.scrollHeight
   }
 
   useEffect(() => { activeWorkAreaIdRef.current = activeWorkAreaId }, [activeWorkAreaId])
@@ -830,7 +876,7 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
           <aside className={`selection-panel ${selectionPanelOpen ? 'open' : 'collapsed'}`}>
             {selectionPanelOpen ? <>
               <div className="side-panel-header"><span><MousePointer2 size={15} />{t('selection')}</span><button onClick={() => setSelectionPanelOpen(false)}><ChevronLeft size={16} /></button></div>
-              <div className="selection-panel-body">
+              <div className="selection-panel-body" ref={selectionBodyRef} style={{ gridTemplateRows: `${selectionSplit}fr 7px ${1 - selectionSplit}fr` }}>
                 <section className="selection-content-section">
                   <div className="section-label"><span>{t('selectedContent')} · {selections.length}</span>{selections.length > 0 && <button onClick={() => { selectionsRef.current = []; setSelections([]); setSelectedText('') }}><X size={14} /> {t('clear')}</button>}</div>
                   {selections.length === 0 ? <div className="selection-empty"><MousePointer2 size={22} /><p>{t('selectionEmpty')}</p></div> : <>
@@ -842,6 +888,7 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
                     {busy === 'ocr' ? <div className="inline-loading"><LoaderCircle className="spin" size={16} /> {progress}</div> : <textarea value={selectedText} onChange={(e) => setSelectedText(e.target.value)} placeholder={hasVisualSelection ? t('visualPlaceholder') : t('textPlaceholder')} />}
                   </>}
                 </section>
+                <div className="section-resizer" onPointerDown={startSelectionSplitResize} role="separator" aria-orientation="horizontal" aria-label="调整选区与对话区域高度" />
                 <section className="conversation-sidebar">
                   <div className="section-label"><span>{t('conversations')}</span></div>
                   <div className="conversation-list">{conversations.map((conversation) => {
@@ -912,9 +959,10 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
               {error && <div className="error-banner"><X size={15} /><span>{error}</span></div>}
               </div>
               <div className="prompt-area">
+                <div className="prompt-height-resizer" onPointerDown={startPromptResize} role="separator" aria-orientation="horizontal" aria-label="调整输入框高度" />
                 {!aiConfig.apiKey && !configured && <button className="config-warning" onClick={openSettings}>{t('notConfigured')}</button>}
                 {skillSuggestions.length > 0 && <div className="skill-command-menu">{skillSuggestions.map((skill) => <button key={skill.id} onClick={() => setCustomPrompt(`/${skill.command} `)}><Puzzle size={14} /><span><strong>/{skill.command}</strong><small>{skill.name}</small></span></button>)}</div>}
-                <div className="prompt-box"><textarea value={customPrompt} onChange={(e) => setCustomPrompt(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (customPrompt.trim()) runAi('custom', customPrompt.trim()) } }} placeholder={scope === 'document' ? t('promptDocument') : t('promptSelection')} /><button disabled={!!busy || currentAiBusy || !customPrompt.trim() || (scope === 'selection' && !selectionReady)} onClick={() => runAi('custom', customPrompt.trim())}><Send size={17} /></button></div>
+                <div className="prompt-box" style={{ height: promptHeight }}><textarea value={customPrompt} onChange={(e) => setCustomPrompt(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (customPrompt.trim()) runAi('custom', customPrompt.trim()) } }} placeholder={scope === 'document' ? t('promptDocument') : t('promptSelection')} /><button disabled={!!busy || currentAiBusy || !customPrompt.trim() || (scope === 'selection' && !selectionReady)} onClick={() => runAi('custom', customPrompt.trim())}><Send size={17} /></button></div>
                 <small className="prompt-hint">{t('sendHint')} · <button onClick={() => setCustomPrompt('/')}>{t('chooseSkillHint')}</button></small>
               </div>
             </> : <button className="collapsed-panel-button right" onClick={() => setPanelOpen(true)} title="展开 AI 助手"><ChevronLeft size={17} /></button>}

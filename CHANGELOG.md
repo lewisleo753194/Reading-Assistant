@@ -4,6 +4,8 @@ All notable changes to Reading Assistant are documented here.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-26
+
 ### Added
 
 - Optional IndexedDB-backed file memory for conversations, page position, zoom, and reading state.
@@ -13,8 +15,14 @@ All notable changes to Reading Assistant are documented here.
 ### Improved
 
 - The AI prompt can be resized vertically.
+- The AI prompt is resized from its top edge while the newest conversation content stays visible.
+- The selection and conversation areas in the left sidebar have a draggable horizontal divider.
 - The settings window is taller while retaining a stable size across tabs.
 - New selections respect a collapsed selection sidebar.
+
+### Fixed
+
+- Only the divider currently being dragged is highlighted.
 
 ## [0.2.0] - 2026-08-24
 

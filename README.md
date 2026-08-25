@@ -3,7 +3,7 @@
 [中文](README.md) | [English](README_EN.md)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-![Version](https://img.shields.io/badge/version-0.2.0-6b7cff)
+![Version](https://img.shields.io/badge/version-0.3.0-6b7cff)
 ![Platform](https://img.shields.io/badge/platform-Windows-0078d4)
 
 Reading Assistant 是一款面向论文、教材和技术文档的 PDF / 图片 AI 阅读助手。它提供连续 PDF 阅读、文字选择、跨页区域框选、OCR、全文上下文问答，以及可自行配置的 OpenAI Chat Completions 兼容模型。
@@ -23,7 +23,8 @@ Reading Assistant 是一款面向论文、教材和技术文档的 PDF / 图片 
 - 日间 / 夜间模式同步作用于界面和文档，并保留上次选择。
 - 内置中文和英文界面；AI 回答及翻译目标语言随应用语言切换。
 - 大型 PDF 按需渲染当前页附近内容，降低内存占用。
-- AI 输入框可垂直调整高度；关闭选区侧栏后，新增选区不会强制重新展开。
+- AI 输入框可从上边界垂直调整高度，并保持最新对话可见；左侧选区与对话区域也可拖动分隔线调整。
+- 关闭选区侧栏后，新增选区不会强制重新展开。
 - 可选的文件记忆会在重新打开同一文件时恢复对话、页码和阅读状态。
 - 可选的用户记忆会学习稳定的背景与回答偏好，并支持在设置中查看、编辑和清空。
 
@@ -31,7 +32,7 @@ Reading Assistant 是一款面向论文、教材和技术文档的 PDF / 图片 
 
 Windows 用户可以在 [GitHub Releases](https://github.com/lxymol/Reading-Assistant/releases) 下载最新安装程序。安装包不会修改系统环境变量，也不要求另行安装 Node.js。
 
-当前版本：`0.2.0`。
+当前版本：`0.3.0`。
 
 ## AI 配置
 
@@ -87,7 +88,7 @@ npm run build
 npm run desktop:pack
 ```
 
-Windows NSIS 安装程序输出到 `release-0.2.0/`。发布产物已被 Git 忽略，请通过 GitHub Releases 上传安装包，不要把安装包直接提交到源码历史。
+Windows NSIS 安装程序输出到 `release-0.3.0/`。发布产物已被 Git 忽略，请通过 GitHub Releases 上传安装包，不要把安装包直接提交到源码历史。
 
 ## 隐私与安全
 
