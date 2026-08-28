@@ -7,18 +7,19 @@ import remarkGfm from 'remark-gfm'
 import rehypeKatex from 'rehype-katex'
 import 'katex/dist/katex.min.css'
 import {
-  BookOpen, BrainCircuit, ChevronLeft, ChevronRight, Copy, FileText, Languages,
-  Lightbulb, LoaderCircle, MessageSquareText, Minus, Moon, PanelRightClose,
-  PanelRightOpen, Plus, Puzzle, Send, Settings2, Sparkles, Sun, Upload, MousePointer2, TextCursorInput, X,
+  BookOpen, BrainCircuit, ChevronLeft, ChevronRight, Copy, FileText, Languages, FolderOpen,
+  Lightbulb, LoaderCircle, MessageSquareText, Minus,
+  Plus, Puzzle, Send, Settings2, Sparkles, Sun, MousePointer2, TextCursorInput, X, StickyNote, Palette, Square, Pin, Trash2,
 } from 'lucide-react'
 import DropZone from './components/DropZone'
 import DocumentViewer from './components/DocumentViewer'
 import AiSettingsModal from './components/AiSettingsModal'
+import NoteEditor from './components/NoteEditor'
 import { extractPdfRegionText, extractPdfText, getSampledPageNumbers } from './lib/pdf'
-import type { AiConfig, ChatMessage, ImportedSkill, MemorySettings, SelectionResult, SourceFile } from './types'
+import type { AiConfig, ChatMessage, DocumentHighlight, ImportedSkill, MemorySettings, SelectionResult, SourceFile } from './types'
 import { getLanguagePacks, registerLanguagePack, useI18n, type AppLanguage, type LanguagePack } from './i18n'
 import { parseLanguageImport, parseSkillImport } from './lib/imports'
-import { clearFileMemories, deleteFileMemory, getFileMemory, getFileMemoryId, listFileMemories, saveFileMemory, type FileMemoryRecord, type FileMemorySummary } from './lib/memory'
+import { clearFileMemories, deleteFileMemory, getFileMemory, getFileMemoryId, listFileMemories, listFileMemoryRecords, saveFileMemory, type FileMemoryRecord, type FileMemorySummary } from './lib/memory'
 
 type AiAction = 'translate' | 'explain' | 'insight' | 'summarize' | 'custom'
 type CapturedSelection = SelectionResult & { id: string; text: string; textParts: string[]; loading: boolean }
@@ -38,6 +39,8 @@ type WorkArea = {
   currentPage: number
   areaSelectionEnabled: boolean
   scope: 'selection' | 'document'
+  note: string
+  highlights: DocumentHighlight[]
 }
 type OcrWorker = Awaited<ReturnType<typeof createWorker>>
 
@@ -71,7 +74,7 @@ const loadAiConfig = (): AiConfig => {
 }
 
 const loadDarkTheme = () => localStorage.getItem('reading-assistant-theme') === 'dark'
-const defaultMemorySettings: MemorySettings = { fileMemoryEnabled: true, userMemoryEnabled: false }
+const defaultMemorySettings: MemorySettings = { userMemoryEnabled: false }
 const loadMemorySettings = (): MemorySettings => {
   try {
     const saved = JSON.parse(localStorage.getItem('reading-assistant-memory-settings') || '{}')
@@ -94,7 +97,7 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
   const { t, pack } = useI18n()
   const [workAreas, setWorkAreas] = useState<WorkArea[]>([])
   const [activeWorkAreaId, setActiveWorkAreaId] = useState<string | null>(null)
-  const [homeVisible, setHomeVisible] = useState(true)
+  const [homeVisible, setHomeVisible] = useState(false)
   const [source, setSource] = useState<SourceFile | null>(null)
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null)
   const [documentText, setDocumentText] = useState('')
@@ -110,11 +113,8 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
   const [areaSelectionEnabled, setAreaSelectionEnabled] = useState(false)
   const [scope, setScope] = useState<'selection' | 'document'>('selection')
   const [dark, setDark] = useState(loadDarkTheme)
-  const [panelOpen, setPanelOpen] = useState(true)
-  const [selectionPanelOpen, setSelectionPanelOpen] = useState(true)
   const [selectionPanelWidth, setSelectionPanelWidth] = useState(260)
   const [aiPanelWidth, setAiPanelWidth] = useState(390)
-  const [selectionSplit, setSelectionSplit] = useState(0.5)
   const [promptHeight, setPromptHeight] = useState(78)
   const [busy, setBusy] = useState<'ocr' | 'extract' | ''>('')
   const [aiTasks, setAiTasks] = useState<Set<string>>(() => new Set())
@@ -128,6 +128,11 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
   const [userMemory, setUserMemory] = useState(loadUserMemory)
   const [fileMemorySummaries, setFileMemorySummaries] = useState<FileMemorySummary[]>([])
   const [deepThinking, setDeepThinking] = useState(false)
+  const [activity, setActivity] = useState<'projects' | 'selection' | 'chat' | 'notes'>('projects')
+  const [note, setNote] = useState('')
+  const [highlights, setHighlights] = useState<DocumentHighlight[]>([])
+  const [panelPlacement, setPanelPlacement] = useState<Record<'projects' | 'selection' | 'chat' | 'notes', 'left' | 'right' | 'float'>>({ projects: 'left', selection: 'left', chat: 'right', notes: 'right' })
+  const abortControllersRef = useRef(new Map<string, AbortController>())
   const hasVisualSelection = aiConfig.visionEnabled && selections.some((item) => item.images.length > 0)
   const selectionReady = Boolean(selectedText || hasVisualSelection)
   const workerRef = useRef<OcrWorker | null>(null)
@@ -139,7 +144,6 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
   const scrollFrameRef = useRef<number | null>(null)
   const resizeRef = useRef<
     | { kind: 'panel'; panel: 'selection' | 'ai'; startX: number; startWidth: number }
-    | { kind: 'selection-split'; startY: number; startRatio: number; containerHeight: number }
     | { kind: 'prompt'; startY: number; startHeight: number }
     | null
   >(null)
@@ -165,11 +169,6 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
         const delta = event.clientX - resize.startX
         if (resize.panel === 'selection') setSelectionPanelWidth(Math.max(210, Math.min(440, resize.startWidth + delta)))
         if (resize.panel === 'ai') setAiPanelWidth(Math.max(300, Math.min(680, resize.startWidth - delta)))
-      }
-      if (resize.kind === 'selection-split') {
-        const minimum = Math.min(0.42, 96 / resize.containerHeight)
-        const ratio = resize.startRatio + (event.clientY - resize.startY) / resize.containerHeight
-        setSelectionSplit(Math.max(minimum, Math.min(1 - minimum, ratio)))
       }
       if (resize.kind === 'prompt') {
         const nextHeight = Math.max(54, Math.min(window.innerHeight * 0.45, resize.startHeight - (event.clientY - resize.startY)))
@@ -202,15 +201,6 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
     event.preventDefault()
     resizeRef.current = { kind: 'panel', panel, startX: event.clientX, startWidth }
     document.body.classList.add('resizing-panels')
-  }
-
-  const startSelectionSplitResize = (event: ReactPointerEvent) => {
-    const containerHeight = selectionBodyRef.current?.clientHeight || 0
-    if (!containerHeight) return
-    event.preventDefault()
-    resizeRef.current = { kind: 'selection-split', startY: event.clientY, startRatio: selectionSplit, containerHeight }
-    document.body.classList.add('resizing-vertical')
-    document.body.classList.add('resizing-selection-split')
   }
 
   const startPromptResize = (event: ReactPointerEvent) => {
@@ -251,7 +241,7 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
   }
 
   useEffect(() => {
-    if (!memorySettings.fileMemoryEnabled || !source) return
+    if (!source) return
     const memoryKey = getFileMemoryId(source.file)
     if (forgottenFileKeysRef.current.has(memoryKey)) return
     const timer = window.setTimeout(() => {
@@ -269,14 +259,17 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
         zoom,
         areaSelectionEnabled,
         scope,
+        fileBlob: source.file,
+        documentText,
+        note,
+        highlights,
       }
       void saveFileMemory(record).then(refreshFileMemorySummaries).catch(() => undefined)
     }, 700)
     return () => window.clearTimeout(timer)
-  }, [memorySettings.fileMemoryEnabled, source, conversations, activeConversationId, history, currentPage, zoom, areaSelectionEnabled, scope, refreshFileMemorySummaries])
+  }, [source, conversations, activeConversationId, history, currentPage, zoom, areaSelectionEnabled, scope, documentText, note, highlights, refreshFileMemorySummaries])
 
   useEffect(() => {
-    if (!memorySettings.fileMemoryEnabled) return
     const inactiveAreas = workAreas.filter((area) => area.id !== activeWorkAreaId && !forgottenFileKeysRef.current.has(area.memoryKey))
     if (!inactiveAreas.length) return
     const timer = window.setTimeout(() => {
@@ -294,15 +287,34 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
           zoom: area.zoom,
           areaSelectionEnabled: area.areaSelectionEnabled,
           scope: area.scope,
+          fileBlob: area.source.file,
+          documentText: area.documentText,
+          note: area.note,
+          highlights: area.highlights,
         }
         void saveFileMemory(record).catch(() => undefined)
       })
     }, 700)
     return () => window.clearTimeout(timer)
-  }, [memorySettings.fileMemoryEnabled, workAreas, activeWorkAreaId])
+  }, [workAreas, activeWorkAreaId])
 
   useEffect(() => {
     fetch('/api/health').then((r) => r.json()).then((data) => setConfigured(data.configured)).catch(() => setConfigured(false))
+  }, [])
+
+  useEffect(() => {
+    let active = true
+    void listFileMemoryRecords().then((records) => {
+      if (!active) return
+      const restored = records.filter((record) => record.fileBlob).map((record): WorkArea => {
+        const file = new File([record.fileBlob!], record.fileName, { type: record.fileType, lastModified: record.lastModified })
+        const conversation = { id: makeId(), title: '新对话', history: [] }
+        const savedConversations = record.conversations?.length ? record.conversations : [conversation]
+        return { id: makeId(), memoryKey: record.id, source: { name: file.name, kind: file.type === 'application/pdf' ? 'pdf' : 'image', url: URL.createObjectURL(file), file }, pdf: null, documentText: record.documentText || '', selectedText: '', selections: [], conversations: savedConversations, activeConversationId: savedConversations.some((item) => item.id === record.activeConversationId) ? record.activeConversationId : savedConversations[0].id, customPrompt: '', zoom: record.zoom || 1, currentPage: record.currentPage || 1, areaSelectionEnabled: record.areaSelectionEnabled || false, scope: record.scope || 'selection', note: record.note || '', highlights: record.highlights || [] }
+      })
+      setWorkAreas(restored)
+    }).catch(() => undefined)
+    return () => { active = false }
   }, [])
 
   useEffect(() => () => { workerRef.current?.terminate() }, [])
@@ -316,7 +328,7 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
     id: activeWorkAreaId, memoryKey: getFileMemoryId(source.file), source, pdf, documentText, selectedText, selections,
     conversations: conversations.map((item) => item.id === activeConversationId ? { ...item, history } : item),
     activeConversationId, customPrompt,
-    zoom, currentPage, areaSelectionEnabled, scope,
+    zoom, currentPage, areaSelectionEnabled, scope, note, highlights,
   } : null
 
   const loadWorkArea = (area: WorkArea) => {
@@ -326,14 +338,10 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
     setHistory(area.conversations.find((item) => item.id === area.activeConversationId)?.history || [])
     setCustomPrompt(area.customPrompt); setZoom(area.zoom)
     setCurrentPage(area.currentPage); setAreaSelectionEnabled(area.areaSelectionEnabled); setScope(area.scope); setError('')
+    setNote(area.note || ''); setHighlights(area.highlights || [])
     activeWorkAreaIdRef.current = area.id
     activeConversationIdRef.current = area.activeConversationId
     pendingPageRestoreRef.current = area.currentPage
-  }
-
-  const saveCurrent = () => {
-    const snapshot = snapshotCurrent()
-    if (snapshot) setWorkAreas((items) => items.map((item) => item.id === snapshot.id ? snapshot : item))
   }
 
   const openFile = async (file: File) => {
@@ -350,9 +358,7 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
     const snapshot = snapshotCurrent()
     const id = makeId()
     let remembered: FileMemoryRecord | undefined
-    if (memorySettings.fileMemoryEnabled) {
-      try { remembered = await getFileMemory(memoryKey) } catch { remembered = undefined }
-    }
+    try { remembered = await getFileMemory(memoryKey) } catch { remembered = undefined }
     forgottenFileKeysRef.current.delete(memoryKey)
     const conversation: Conversation = { id: makeId(), title: t('untitledConversation'), history: [] }
     const restoredConversations = remembered?.conversations?.length ? remembered.conversations : [conversation]
@@ -361,8 +367,8 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
       : restoredConversations[0].id
     const next: WorkArea = {
       id, memoryKey, source: { name: file.name, kind: file.type === 'application/pdf' ? 'pdf' : 'image', url: URL.createObjectURL(file), file },
-      pdf: null, documentText: '', selectedText: '', selections: [], conversations: restoredConversations, activeConversationId: restoredActiveConversationId, customPrompt: '', zoom: remembered?.zoom || 1,
-      currentPage: remembered?.currentPage || 1, areaSelectionEnabled: remembered?.areaSelectionEnabled || false, scope: remembered?.scope || 'selection',
+      pdf: null, documentText: remembered?.documentText || '', selectedText: '', selections: [], conversations: restoredConversations, activeConversationId: restoredActiveConversationId, customPrompt: '', zoom: remembered?.zoom || 1,
+      currentPage: remembered?.currentPage || 1, areaSelectionEnabled: remembered?.areaSelectionEnabled || false, scope: remembered?.scope || 'selection', note: remembered?.note || '', highlights: remembered?.highlights || [],
     }
     setWorkAreas((items) => [...items.map((item) => snapshot && item.id === snapshot.id ? snapshot : item), next])
     setActiveWorkAreaId(id)
@@ -383,12 +389,10 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
     loadWorkArea(target)
   }
 
-  const showHome = () => { saveCurrent(); setHomeVisible(true) }
-
   const closeWorkArea = (event: ReactMouseEvent, id: string) => {
     event.stopPropagation()
     const target = id === activeWorkAreaId ? snapshotCurrent() : workAreas.find((item) => item.id === id)
-    if (target && memorySettings.fileMemoryEnabled && !forgottenFileKeysRef.current.has(target.memoryKey)) {
+    if (target && !forgottenFileKeysRef.current.has(target.memoryKey)) {
       const record: FileMemoryRecord = {
         id: target.memoryKey,
         fileName: target.source.file.name,
@@ -402,6 +406,10 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
         zoom: target.zoom,
         areaSelectionEnabled: target.areaSelectionEnabled,
         scope: target.scope,
+        fileBlob: target.source.file,
+        documentText: target.documentText,
+        note: target.note,
+        highlights: target.highlights,
       }
       void saveFileMemory(record).catch(() => undefined)
     }
@@ -641,6 +649,14 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
     }
   }
 
+  useEffect(() => {
+    if (!source || documentText || (source.kind === 'pdf' && !pdf)) return
+    const timer = window.setTimeout(() => { if (activeWorkAreaId) void buildDocumentContext(activeWorkAreaId).catch(() => undefined) }, 250)
+    return () => window.clearTimeout(timer)
+    // Indexing intentionally starts once per opened source as soon as its renderer is ready.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [source?.url, pdf])
+
   const updateConversationRoute = (workspaceId: string, conversationId: string, update: (conversation: Conversation) => Conversation) => {
     if (activeWorkAreaIdRef.current === workspaceId) {
       setConversations((items) => items.map((item) => item.id === conversationId ? update(item) : item))
@@ -737,10 +753,6 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
   const runAi = async (action: AiAction, instruction = '') => {
     setError('')
     if (!source || !activeWorkAreaId) return
-    if (scope === 'selection' && !selectionReady) {
-      setError(t('selectFirst'))
-      return
-    }
     let effectiveInstruction = instruction.trim()
     let requestedSkillId = ''
     if (action === 'custom' && effectiveInstruction.startsWith('/')) {
@@ -757,17 +769,13 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
     const conversationId = activeConversationId
     const taskKey = `${workspaceId}:${conversationId}`
     if (aiTasks.has(taskKey)) return
-    const targetIsDocument = scope === 'document'
+    const targetIsDocument = scope === 'document' || !selectionReady
     const selectionImages = targetIsDocument ? [] : selections.flatMap((item) => item.images).slice(0, 4)
     const reasoningActive = deepThinking && aiConfig.reasoningEnabled
-    if (reasoningActive && selectionImages.length > 0) {
-      setError(t('reasoningImageUnsupported'))
-      return
-    }
     const actionLabel = (requestedSkillId ? skills.find((skill) => skill.id === requestedSkillId)?.name : effectiveInstruction) || ({ translate: t('translate'), explain: t('explain'), insight: t('insight'), summarize: t('summarize'), custom: 'AI' }[action])
     const userLabel = `${targetIsDocument ? t('documentScope') : t('selectedScope')} · ${actionLabel}`
     const targetText = targetIsDocument ? (documentText || source.name) : (selectedText || `视觉选区 · ${selections.flatMap((item) => item.images).length} 张图片`)
-    const userMessage: ChatMessage = { id: makeId(), role: 'user', content: targetText, label: userLabel }
+    const userMessage: ChatMessage = { id: makeId(), role: 'user', content: targetText, label: userLabel, sourcePage: currentPage }
     const previousHistory = history
     const requestHistory = [...history, userMessage]
     setHistory(requestHistory)
@@ -777,12 +785,15 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
       history: requestHistory,
     } : item))
     setAiTasks((items) => new Set(items).add(taskKey))
+    const requestController = new AbortController()
+    abortControllersRef.current.set(taskKey, requestController)
     setCustomPrompt('')
     try {
       const context = await buildDocumentContext(workspaceId)
       const response = await fetch('/api/ai', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: requestController.signal,
         body: JSON.stringify({
           action,
           selectedText: targetIsDocument ? '' : selectedText,
@@ -806,12 +817,31 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
       updateConversationRoute(workspaceId, conversationId, (conversation) => ({ ...conversation, history: [...conversation.history, assistantMessage] }))
       learnUserMemory(effectiveInstruction || actionLabel, data.content)
     } catch (reason) {
-      const message = reason instanceof Error ? reason.message : t('processFailed')
+      const message = requestController.signal.aborted ? (pack.code === 'en-US' ? 'Generation stopped.' : '已停止生成。') : reason instanceof Error ? reason.message : t('processFailed')
       const errorMessage: ChatMessage = { id: makeId(), role: 'assistant', content: `⚠️ ${message}` }
       updateConversationRoute(workspaceId, conversationId, (conversation) => ({ ...conversation, history: [...conversation.history, errorMessage] }))
     } finally {
+      abortControllersRef.current.delete(taskKey)
       setAiTasks((items) => { const next = new Set(items); next.delete(taskKey); return next })
+      selectionsRef.current = []; setSelections([]); setSelectedText('')
     }
+  }
+
+  const stopAi = () => {
+    if (currentAiTaskKey) abortControllersRef.current.get(currentAiTaskKey)?.abort()
+  }
+
+  const deleteMessage = (id: string) => {
+    const next = history.filter((message) => message.id !== id)
+    setHistory(next)
+    setConversations((items) => items.map((item) => item.id === activeConversationId ? { ...item, history: next } : item))
+  }
+
+  const jumpToPage = (page: number) => {
+    const container = readerScrollRef.current
+    const target = container?.querySelector<HTMLElement>(`[data-page-number="${page}"]`)
+    if (container && target) container.scrollTo({ top: target.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop - 20, behavior: 'smooth' })
+    setCurrentPage(page)
   }
 
   const addTextToAi = (text: string) => {
@@ -819,7 +849,7 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
     setSelections((items) => { const next = [...items, { id: selectionId, image: '', images: [], page: currentPage, regions: [], text, textParts: [text], loading: false }]; selectionsRef.current = next; return next })
     setSelectedText((previous) => [previous, text].filter(Boolean).join('\n\n'))
     setScope('selection')
-    setPanelOpen(true)
+    setActivity('chat')
   }
 
   const translateTextInline = async (text: string) => {
@@ -849,70 +879,55 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
     return ''
   }, [busy, progress, selectedText, selections.length, hasVisualSelection, t])
 
+  const explorerOpen = activity === 'projects' || activity === 'selection'
+  const assistantOpen = Boolean(source && (activity === 'chat' || activity === 'notes'))
+  const currentPlacement = panelPlacement[activity]
+  const leftWidth = currentPlacement === 'left' ? (explorerOpen ? selectionPanelWidth : aiPanelWidth) : 0
+  const rightWidth = currentPlacement === 'right' ? (explorerOpen ? selectionPanelWidth : aiPanelWidth) : 0
+  const finishPanelDrag = (event: React.DragEvent) => {
+    const ratio = event.clientX / window.innerWidth
+    setPanelPlacement((items) => ({ ...items, [activity]: ratio < .34 ? 'left' : ratio > .66 ? 'right' : 'float' }))
+  }
+
   return (
-    <div className="app-shell">
-      <header className="topbar">
-        <button className="brand" onClick={showHome} title={t('home')}><div className="brand-mark"><BookOpen size={21} /></div><span>Reading Assistant</span></button>
-        <div className="workspace-tabs">{workAreas.map((area) => <button key={area.id} className={!homeVisible && activeWorkAreaId === area.id ? 'active' : ''} onClick={() => openWorkArea(area.id)} title={area.source.name}>{Array.from(aiTasks).some((key) => key.startsWith(`${area.id}:`)) ? <LoaderCircle className="spin" size={13} /> : <FileText size={13} />}<span>{area.source.name}</span><i onClick={(event) => closeWorkArea(event, area.id)} title={t('closeTab')}><X size={12} /></i></button>)}</div>
-        <div className="top-actions">
-          <label className="compact-upload" title={t('openFile')}><Upload size={17} /><input hidden type="file" accept="application/pdf,image/*" onChange={(e) => e.target.files?.[0] && openFile(e.target.files[0])} /></label>
-          <button className="icon-button" onClick={() => setDark((value) => !value)} title={dark ? t('light') : t('dark')}>{dark ? <Sun size={18} /> : <Moon size={18} />}</button>
-          {source && <button className="icon-button mobile-panel-toggle" onClick={() => setPanelOpen((value) => !value)}>{panelOpen ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}</button>}
-          <button className="icon-button" onClick={openSettings} title={t('settings')}><Settings2 size={18} /></button>
-        </div>
-      </header>
+    <div className="app-shell modern-shell">
+      <nav className="activity-bar">
+        <div className="activity-logo"><BookOpen size={24} /></div>
+        <button className={activity === 'selection' ? 'active' : ''} disabled={!source} onClick={() => setActivity('selection')} title={t('selection')}><MousePointer2 /></button>
+        <button className={activity === 'projects' ? 'active' : ''} onClick={() => setActivity('projects')} title="项目"><FolderOpen /></button>
+        <button className={activity === 'chat' ? 'active' : ''} disabled={!source} onClick={() => setActivity('chat')} title={t('conversations')}><MessageSquareText /></button>
+        <button className={activity === 'notes' ? 'active' : ''} disabled={!source} onClick={() => setActivity('notes')} title="笔记"><StickyNote /></button>
+        <label title={t('openFile')}><Plus /><input hidden type="file" accept="application/pdf,image/*" onChange={(e) => e.target.files?.[0] && openFile(e.target.files[0])} /></label>
+        <span className="activity-spacer" />
+        <button onClick={() => setDark((value) => !value)} title={dark ? t('light') : t('dark')}>{dark ? <Sun /> : <Palette />}</button>
+        <button onClick={openSettings} title={t('settings')}><Settings2 /></button>
+      </nav>
+      <main className="workspace" onDragOver={(event) => event.preventDefault()} onDrop={finishPanelDrag} style={{ '--selection-width': `${leftWidth}px`, '--ai-width': `${rightWidth}px` } as CSSProperties}>
+        {explorerOpen && <aside className={`selection-panel open dock-${currentPlacement}`}>
+          <div className="side-panel-header" draggable onDragEnd={finishPanelDrag}><span>{activity === 'projects' ? <><FolderOpen size={15} />项目</> : <><MousePointer2 size={15} />{t('selection')}</>}</span><div className="dock-actions"><button onClick={() => setPanelPlacement((items) => ({ ...items, [activity]: currentPlacement === 'left' ? 'right' : 'left' }))}>{currentPlacement === 'left' ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}</button><button onClick={() => setPanelPlacement((items) => ({ ...items, [activity]: 'float' }))}><Pin size={13} /></button></div></div>
+          {activity === 'projects' ? <div className="project-explorer">
+            <label className="new-project"><Plus size={15} />新建项目<input hidden type="file" accept="application/pdf,image/*" onChange={(e) => e.target.files?.[0] && openFile(e.target.files[0])} /></label>
+            {workAreas.map((area) => <section className={`project-item ${area.id === activeWorkAreaId ? 'active' : ''}`} key={area.id}>
+              <button className="project-title" onClick={() => openWorkArea(area.id)}>{Array.from(aiTasks).some((key) => key.startsWith(`${area.id}:`)) ? <LoaderCircle className="spin" size={14} /> : <FileText size={14} />}<span>{area.source.name}</span><i onClick={(event) => { event.stopPropagation(); void forgetFileMemory(area.memoryKey); closeWorkArea(event, area.id) }} title="删除项目"><Trash2 size={13} /></i></button>
+              {area.id === activeWorkAreaId && <div className="project-conversations"><button onClick={createConversation}><Plus size={12} />新对话</button>{conversations.map((conversation) => <button key={conversation.id} className={conversation.id === activeConversationId ? 'active' : ''} onClick={() => { openConversation(conversation.id); setActivity('chat') }}><MessageSquareText size={12} /><span>{conversation.title}</span><i onClick={(event) => deleteConversation(event, conversation.id)}><X size={11} /></i></button>)}</div>}
+            </section>)}
+            {!workAreas.length && <div className="selection-empty"><BookOpen size={30} /><p>点击“新建项目”打开 PDF 或图片</p></div>}
+          </div> : <div className="selection-panel-body single" ref={selectionBodyRef}><section className="selection-content-section">
+            <div className="section-label"><span>{t('selectedContent')} · {selections.length}</span>{selections.length > 0 && <button onClick={() => { selectionsRef.current = []; setSelections([]); setSelectedText('') }}><X size={14} /> {t('clear')}</button>}</div>
+            {selections.length === 0 ? <div className="selection-empty"><MousePointer2 size={22} /><p>{t('selectionEmpty')}</p></div> : <>{selections.some((selection) => selection.images.length > 0) && <div className="selection-strip">{selections.flatMap((selection) => selection.images.map((image, imageIndex) => <div className="selection-thumb" key={`${selection.id}-${imageIndex}`}><img src={image} alt="选区预览" />{selection.loading && <span><LoaderCircle className="spin" size={10} /></span>}<button className="remove-selection-image" onClick={() => removeSelectionImage(selection.id, imageIndex)}><X size={11} /></button></div>))}</div>}{busy === 'ocr' ? <div className="inline-loading"><LoaderCircle className="spin" size={16} /> {progress}</div> : <textarea value={selectedText} onChange={(e) => setSelectedText(e.target.value)} />}</>}
+          </section></div>}
+          <div className="panel-resizer right" onPointerDown={(event) => startResize('selection', selectionPanelWidth, event)} />
+        </aside>}
 
-      {homeVisible || !source ? (
-        <main className="welcome">
-          <div className="welcome-copy"><h1>{t('appName')}</h1></div>
-          <DropZone onFile={openFile} />
-          <div className="welcome-credit"><span>Created by xyLee</span><a href="https://github.com/lxymol/Reading-Assistant" target="_blank" rel="noreferrer">GitHub · Reading-Assistant</a></div>
-        </main>
-      ) : (
-        <main className="workspace" style={{
-          '--selection-width': `${selectionPanelOpen ? selectionPanelWidth : 28}px`,
-          '--ai-width': `${panelOpen ? aiPanelWidth : 28}px`,
-        } as CSSProperties}>
-          <aside className={`selection-panel ${selectionPanelOpen ? 'open' : 'collapsed'}`}>
-            {selectionPanelOpen ? <>
-              <div className="side-panel-header"><span><MousePointer2 size={15} />{t('selection')}</span><button onClick={() => setSelectionPanelOpen(false)}><ChevronLeft size={16} /></button></div>
-              <div className="selection-panel-body" ref={selectionBodyRef} style={{ gridTemplateRows: `${selectionSplit}fr 7px ${1 - selectionSplit}fr` }}>
-                <section className="selection-content-section">
-                  <div className="section-label"><span>{t('selectedContent')} · {selections.length}</span>{selections.length > 0 && <button onClick={() => { selectionsRef.current = []; setSelections([]); setSelectedText('') }}><X size={14} /> {t('clear')}</button>}</div>
-                  {selections.length === 0 ? <div className="selection-empty"><MousePointer2 size={22} /><p>{t('selectionEmpty')}</p></div> : <>
-                    {selections.some((selection) => selection.images.length > 0) && <div className="selection-strip">{selections.flatMap((selection) => selection.images.map((image, imageIndex) => <div className="selection-thumb" key={`${selection.id}-${imageIndex}`}>
-                      <img src={image} alt="选区预览" />
-                      {selection.loading && <span><LoaderCircle className="spin" size={10} /></span>}
-                      <button className="remove-selection-image" onClick={() => removeSelectionImage(selection.id, imageIndex)} title={t('deleteSelection')}><X size={11} /></button>
-                    </div>))}</div>}
-                    {busy === 'ocr' ? <div className="inline-loading"><LoaderCircle className="spin" size={16} /> {progress}</div> : <textarea value={selectedText} onChange={(e) => setSelectedText(e.target.value)} placeholder={hasVisualSelection ? t('visualPlaceholder') : t('textPlaceholder')} />}
-                  </>}
-                </section>
-                <div className="section-resizer" onPointerDown={startSelectionSplitResize} role="separator" aria-orientation="horizontal" aria-label="调整选区与对话区域高度" />
-                <section className="conversation-sidebar">
-                  <div className="section-label"><span>{t('conversations')}</span></div>
-                  <div className="conversation-list">{conversations.map((conversation) => {
-                    const taskRunning = Boolean(activeWorkAreaId && aiTasks.has(`${activeWorkAreaId}:${conversation.id}`))
-                    return <button key={conversation.id} className={conversation.id === activeConversationId ? 'active' : ''} onClick={() => openConversation(conversation.id)}>
-                      {taskRunning ? <LoaderCircle className="spin" size={13} /> : <MessageSquareText size={13} />}
-                      <span>{conversation.title}</span>
-                      <i className={taskRunning ? 'disabled' : ''} onClick={(event) => { if (!taskRunning) deleteConversation(event, conversation.id) }} title={t('deleteConversation')}><X size={12} /></i>
-                    </button>
-                  })}</div>
-                </section>
-              </div>
-              <div className="panel-resizer right" onPointerDown={(event) => startResize('selection', selectionPanelWidth, event)} />
-            </> : <button className="collapsed-panel-button left" onClick={() => setSelectionPanelOpen(true)} title="展开选区"><ChevronRight size={17} /></button>}
-          </aside>
-
-          <section className="reader-pane">
+        <section className="reader-pane">
+          {!source ? <div className="empty-reader"><img src="/app-icon.svg" alt="Reading Assistant" /><p>从项目栏打开或新建一个文件</p><DropZone onFile={openFile} /></div> : <>
             <div className="reader-toolbar">
               <div className="reader-status-group">
                 {statusText && <div className="status"><span className={busy ? 'status-dot active' : 'status-dot'} /> {statusText}</div>}
               </div>
               {source.kind === 'pdf' && <div className="page-control">
                 <button disabled={currentPage <= 1} onClick={() => turnPage(-1)} title={t('previousPage')}><ChevronLeft size={16} /></button>
-                <span><strong>{currentPage}</strong> / {pdf?.numPages || '…'}</span>
+                <input aria-label="页码" type="number" min={1} max={pdf?.numPages || 1} value={currentPage} onChange={(e) => jumpToPage(Math.max(1, Math.min(pdf?.numPages || 1, Number(e.target.value))))} /><span>/ {pdf?.numPages || '…'}</span>
                 <button disabled={!pdf || currentPage >= pdf.numPages} onClick={() => turnPage(1)} title={t('nextPage')}><ChevronRight size={16} /></button>
               </div>}
               <div className="reader-tools">
@@ -920,40 +935,40 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
                   <button className={!areaSelectionEnabled ? 'active' : ''} onClick={() => setAreaSelectionEnabled(false)}><TextCursorInput size={14} /><span>{t('chooseText')}</span></button>
                   <button className={areaSelectionEnabled ? 'active' : ''} onClick={() => setAreaSelectionEnabled(true)}><MousePointer2 size={14} /><span>{t('chooseArea')}</span></button>
                 </div>
-                <div className="zoom-control"><button onClick={() => setZoom((z) => Math.max(0.6, z - 0.1))}><Minus size={15} /></button><span>{Math.round(zoom * 100)}%</span><button onClick={() => setZoom((z) => Math.min(3, z + 0.1))}><Plus size={15} /></button></div>
+                <div className="zoom-control"><button onClick={() => setZoom((z) => Math.max(0.25, z - 0.1))}><Minus size={15} /></button><input aria-label="缩放倍率" type="number" min="25" max="500" value={Math.round(zoom * 100)} onChange={(e) => setZoom(Math.max(.25, Math.min(5, Number(e.target.value) / 100)))} /><span>%</span><button onClick={() => setZoom((z) => Math.min(5, z + 0.1))}><Plus size={15} /></button></div>
               </div>
             </div>
-            <div className="reader-scroll" ref={readerScrollRef} onScroll={onReaderScroll}><DocumentViewer key={source.url} source={source} zoom={zoom} currentPage={currentPage} inverted={dark} areaSelectionEnabled={areaSelectionEnabled} onPdfReady={onPdfReady} onSelect={onSelect} onTextAi={addTextToAi} onTextTranslate={translateTextInline} /></div>
-          </section>
+            <div className="reader-scroll" ref={readerScrollRef} onScroll={onReaderScroll}><DocumentViewer key={source.url} source={source} zoom={zoom} currentPage={currentPage} inverted={dark} areaSelectionEnabled={areaSelectionEnabled} onPdfReady={onPdfReady} onSelect={onSelect} onTextAi={(text) => { addTextToAi(text); setActivity('chat') }} onTextTranslate={translateTextInline} highlights={highlights} onHighlight={(item) => setHighlights((items) => [...items, { ...item, id: makeId() }])} /></div>
+          </>}</section>
 
-          <aside className={`ai-panel ${panelOpen ? 'open' : 'collapsed'}`}>
-            {panelOpen ? <>
+          {assistantOpen && <aside className={`ai-panel open dock-${currentPlacement}`}>
+            {activity === 'notes' ? <NoteEditor fileName={source!.name} value={note} onChange={setNote} /> : <>
               <div className="panel-resizer left" onPointerDown={(event) => startResize('ai', aiPanelWidth, event)} />
-              <div className="panel-header"><div className="assistant-title"><h2><BrainCircuit size={17} /> {t('aiAssistant')}</h2><button className={`reasoning-toggle ${deepThinking && aiConfig.reasoningEnabled ? 'active' : ''}`} disabled={!aiConfig.reasoningEnabled} onClick={() => setDeepThinking((value) => !value)} title={aiConfig.reasoningEnabled ? t('deepThinking') : t('configureDeepThinking')}><Sparkles size={12} />{t('deepThinking')}</button></div><div className="panel-header-actions"><button className="new-conversation-button" onClick={createConversation}><Plus size={14} />{t('newConversation')}</button><button className="panel-collapse-button" onClick={() => setPanelOpen(false)}><ChevronRight size={17} /></button></div></div>
+              <div className="panel-header" draggable onDragEnd={finishPanelDrag}><div className="assistant-title"><h2><BrainCircuit size={17} /> {t('aiAssistant')}</h2></div><div className="panel-header-actions"><button onClick={() => setPanelPlacement((items) => ({ ...items, [activity]: currentPlacement === 'left' ? 'right' : 'left' }))}>{currentPlacement === 'left' ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}</button><button onClick={() => setPanelPlacement((items) => ({ ...items, [activity]: 'float' }))}><Pin size={13} /></button><button className="new-conversation-button" onClick={createConversation}><Plus size={14} />{t('newConversation')}</button></div></div>
               <section className="ai-fixed-controls">
                 <div className="scope-switch" role="group" aria-label="AI 处理范围">
-                  <button className={scope === 'selection' ? 'active' : ''} onClick={() => setScope('selection')} disabled={!selections.length}>{t('selectedScope')}{selections.length > 0 && <span>{selections.length}</span>}</button>
+                  <button className={scope === 'selection' ? 'active' : ''} onClick={() => setScope('selection')}>{t('selectedScope')}{selections.length > 0 && <span>{selections.length}</span>}</button>
                   <button className={scope === 'document' ? 'active' : ''} onClick={() => setScope('document')}>{t('documentScope')}</button>
                 </div>
                 <div className="action-grid">
-                  <button disabled={!!busy || currentAiBusy || (scope === 'selection' && !selectionReady)} onClick={() => runAi('translate')}><Languages /><span>{t('translate')}</span></button>
-                  <button disabled={!!busy || currentAiBusy || (scope === 'selection' && !selectionReady)} onClick={() => runAi('explain')}><MessageSquareText /><span>{t('explain')}</span></button>
-                  <button disabled={!!busy || currentAiBusy || (scope === 'selection' && !selectionReady)} onClick={() => runAi('insight')}><Lightbulb /><span>{t('insight')}</span></button>
-                  <button disabled={!!busy || currentAiBusy || (scope === 'selection' && !selectionReady)} onClick={() => runAi('summarize')}><FileText /><span>{t('summarize')}</span></button>
+                  <button disabled={!!busy || currentAiBusy} onClick={() => runAi('translate')}><Languages /><span>{t('translate')}</span></button>
+                  <button disabled={!!busy || currentAiBusy} onClick={() => runAi('explain')}><MessageSquareText /><span>{t('explain')}</span></button>
+                  <button disabled={!!busy || currentAiBusy} onClick={() => runAi('insight')}><Lightbulb /><span>{t('insight')}</span></button>
+                  <button disabled={!!busy || currentAiBusy} onClick={() => runAi('summarize')}><FileText /><span>{t('summarize')}</span></button>
                 </div>
               </section>
               <div className="panel-scroll" ref={panelScrollRef}>
               {history.length > 0 && <div className="section-label result-label">{t('analysisHistory')}</div>}
               <section className="conversation">
                 {history.map((message) => message.role === 'user' ? (
-                  <div className="user-event" key={message.id}><span>{message.label}</span><small>{message.content.slice(0, 80)}{message.content.length > 80 ? '…' : ''}</small></div>
+                  <div className="user-event" key={message.id}><span>{message.label}{message.sourcePage && <button className="source-tag" onClick={() => jumpToPage(message.sourcePage!)}>P{message.sourcePage}</button>}</span><small>{message.content.slice(0, 80)}{message.content.length > 80 ? '…' : ''}</small><button className="delete-message" onClick={() => deleteMessage(message.id)}><X size={12} /></button></div>
                 ) : (
                   <article className="answer-card" key={message.id}>
-                    <div className="answer-heading"><span><Sparkles size={15} /> {message.label || t('aiAnalysis')}</span><button onClick={() => navigator.clipboard.writeText(message.content)} title={t('copy')}><Copy size={14} /></button></div>
+                    <div className="answer-heading"><span><Sparkles size={15} /> {message.label || t('aiAnalysis')}</span><div><button onClick={() => navigator.clipboard.writeText(message.content)} title={t('copy')}><Copy size={14} /></button><button onClick={() => deleteMessage(message.id)}><X size={14} /></button></div></div>
                     <div className="markdown"><ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>{normalizeAssistantMarkdown(message.content)}</ReactMarkdown></div>
                   </article>
                 ))}
-                {currentAiBusy && <div className="thinking"><LoaderCircle className="spin" size={18} /><span>{t('thinking')}</span></div>}
+                {currentAiBusy && <div className="thinking"><LoaderCircle className="spin" size={18} /><span>{t('thinking')}</span><button onClick={stopAi}><Square size={13} />停止</button></div>}
                 <div ref={resultsEndRef} />
               </section>
               {error && <div className="error-banner"><X size={15} /><span>{error}</span></div>}
@@ -962,13 +977,12 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
                 <div className="prompt-height-resizer" onPointerDown={startPromptResize} role="separator" aria-orientation="horizontal" aria-label="调整输入框高度" />
                 {!aiConfig.apiKey && !configured && <button className="config-warning" onClick={openSettings}>{t('notConfigured')}</button>}
                 {skillSuggestions.length > 0 && <div className="skill-command-menu">{skillSuggestions.map((skill) => <button key={skill.id} onClick={() => setCustomPrompt(`/${skill.command} `)}><Puzzle size={14} /><span><strong>/{skill.command}</strong><small>{skill.name}</small></span></button>)}</div>}
-                <div className="prompt-box" style={{ height: promptHeight }}><textarea value={customPrompt} onChange={(e) => setCustomPrompt(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (customPrompt.trim()) runAi('custom', customPrompt.trim()) } }} placeholder={scope === 'document' ? t('promptDocument') : t('promptSelection')} /><button disabled={!!busy || currentAiBusy || !customPrompt.trim() || (scope === 'selection' && !selectionReady)} onClick={() => runAi('custom', customPrompt.trim())}><Send size={17} /></button></div>
-                <small className="prompt-hint">{t('sendHint')} · <button onClick={() => setCustomPrompt('/')}>{t('chooseSkillHint')}</button></small>
+                <div className="prompt-box" style={{ height: promptHeight }}><textarea value={customPrompt} onChange={(e) => setCustomPrompt(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (customPrompt.trim()) runAi('custom', customPrompt.trim()) } }} placeholder={scope === 'document' || !selectionReady ? t('promptDocument') : t('promptSelection')} /><button disabled={!!busy || currentAiBusy || !customPrompt.trim()} onClick={() => runAi('custom', customPrompt.trim())}><Send size={17} /></button></div>
+                <small className="prompt-hint"><button className={`reasoning-toggle ${deepThinking && aiConfig.reasoningEnabled ? 'active' : ''}`} disabled={!aiConfig.reasoningEnabled} onClick={() => setDeepThinking((value) => !value)}><Sparkles size={12} />{t('deepThinking')}</button><span>{t('sendHint')} · <button onClick={() => setCustomPrompt('/')}>{t('chooseSkillHint')}</button></span></small>
               </div>
-            </> : <button className="collapsed-panel-button right" onClick={() => setPanelOpen(true)} title="展开 AI 助手"><ChevronLeft size={17} /></button>}
-          </aside>
+            </>}
+          </aside>}
         </main>
-      )}
       {settingsOpen && <AiSettingsModal
           value={aiConfig}
           serverConfigured={Boolean(configured)}

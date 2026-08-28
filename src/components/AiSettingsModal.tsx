@@ -117,7 +117,6 @@ export default function AiSettingsModal({ value, serverConfigured, skills, langu
 
         {tab === 'memory' && <section className="memory-settings">
           <section className="memory-card">
-            <label className="vision-toggle"><input type="checkbox" checked={memorySettings.fileMemoryEnabled} onChange={(event) => onMemorySettingsChange({ ...memorySettings, fileMemoryEnabled: event.target.checked })} /><span className="vision-switch" aria-hidden="true" /><span><strong>{t('fileMemory')}</strong><small>{t('fileMemoryHelp')}</small></span></label>
             <div className="memory-section-heading"><span>{t('rememberedFiles')} · {fileMemories.length}</span>{fileMemories.length > 0 && <button onClick={() => { if (window.confirm(t('confirmDeleteAllFileMemory'))) void onDeleteAllFileMemories() }}><Trash2 size={13} />{t('deleteAll')}</button>}</div>
             <div className="memory-file-list">{fileMemories.length ? fileMemories.map((memory) => <article key={memory.id}><Database size={15} /><div><strong>{memory.fileName}</strong><small>{memory.conversationCount} {t('memoryConversations')} · {new Date(memory.updatedAt).toLocaleString()}</small></div><button onClick={() => { if (window.confirm(t('confirmDeleteFileMemory'))) void onDeleteFileMemory(memory.id) }} title={t('deleteFileMemory')}><Trash2 size={14} /></button></article>) : <div className="memory-empty">{t('noFileMemory')}</div>}</div>
           </section>

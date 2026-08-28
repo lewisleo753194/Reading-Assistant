@@ -4,6 +4,22 @@ All notable changes to Reading Assistant are documented here.
 
 ## [Unreleased]
 
+## [0.4.0-beta.1] - 2026-08-28
+
+### Added
+
+- VS Code-style activity bar for selections, projects, conversations, notes, new projects, settings, and themes.
+- Persistent project files, per-project Markdown notes, pasted images, resizable ink canvases, and Markdown export.
+- Persistent text highlights, source-page tags in conversations, message deletion, and stop-generation controls.
+- Editable page and zoom fields plus dockable and floating side panels.
+
+### Improved
+
+- Projects and their files are restored automatically until explicitly deleted.
+- Document text is extracted and indexed when a file opens; AI requests use a compact summary and relevant chunks instead of repeatedly sending the full text.
+- Empty selections now fall back to document conversation, image requests try the selected default/reasoning model before the vision fallback, and single-word translations request American IPA.
+- Selection state is cleared after each AI request, translation popovers can be moved, and dark-mode contrast is stronger.
+
 ## [0.3.0] - 2026-08-26
 
 ### Added

@@ -20,6 +20,7 @@ export type ChatMessage = {
   role: 'user' | 'assistant'
   content: string
   label?: string
+  sourcePage?: number
 }
 
 export type AiConfig = {
@@ -46,8 +47,14 @@ export type ImportedSkill = {
 }
 
 export type MemorySettings = {
-  fileMemoryEnabled: boolean
   userMemoryEnabled: boolean
+}
+
+export type DocumentHighlight = {
+  id: string
+  page: number
+  text: string
+  color: string
 }
 
 export type FolderImportResult = {

@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { TextLayer, type PDFDocumentProxy } from 'pdfjs-dist'
-import { Check, Copy, ImageOff, Languages, LoaderCircle, Sparkles, X } from 'lucide-react'
+import { Check, Copy, Highlighter, ImageOff, Languages, LoaderCircle, Sparkles, X } from 'lucide-react'
 import SelectableCanvas from './SelectableCanvas'
-import type { SelectionResult, SourceFile } from '../types'
+import type { DocumentHighlight, SelectionResult, SourceFile } from '../types'
 import { loadPdf } from '../lib/pdf'
 import { useI18n } from '../i18n'
 
@@ -16,9 +16,11 @@ type Props = {
   onSelect: (selection: SelectionResult) => void
   onTextAi: (text: string) => void
   onTextTranslate: (text: string) => Promise<string>
+  highlights: DocumentHighlight[]
+  onHighlight: (highlight: Omit<DocumentHighlight, 'id'>) => void
 }
 
-function PdfPage({ pdf, pageNumber, zoom, inverted, textSelectionEnabled }: { pdf: PDFDocumentProxy; pageNumber: number; zoom: number; inverted: boolean; textSelectionEnabled: boolean }) {
+function PdfPage({ pdf, pageNumber, zoom, inverted, textSelectionEnabled, highlights }: { pdf: PDFDocumentProxy; pageNumber: number; zoom: number; inverted: boolean; textSelectionEnabled: boolean; highlights: DocumentHighlight[] }) {
   const textLayerRef = useRef<HTMLDivElement>(null)
   const render = useCallback(async (canvas: HTMLCanvasElement) => {
     const page = await pdf.getPage(pageNumber)
@@ -49,9 +51,13 @@ function PdfPage({ pdf, pageNumber, zoom, inverted, textSelectionEnabled }: { pd
       container.style.setProperty('--scale-round-y', '1px')
       layer = new TextLayer({ textContentSource: await page.getTextContent(), container, viewport })
       await layer.render()
+      const pageHighlights = highlights.filter((item) => item.page === pageNumber)
+      container.querySelectorAll('span').forEach((span) => {
+        if (pageHighlights.some((item) => item.text.includes(span.textContent?.trim() || '') && (span.textContent?.trim().length || 0) > 2)) span.classList.add('saved-highlight')
+      })
     }).catch(() => undefined)
     return () => { active = false; layer?.cancel(); container.replaceChildren() }
-  }, [pdf, pageNumber, textSelectionEnabled, zoom])
+  }, [pdf, pageNumber, textSelectionEnabled, zoom, highlights])
 
   return <SelectableCanvas pageNumber={pageNumber} render={render} onSelect={() => undefined} selectionEnabled={false} inverted={inverted} overlay={<div ref={textLayerRef} className={`text-layer ${textSelectionEnabled ? 'enabled' : ''}`} />} />
 }
@@ -73,7 +79,7 @@ const contextSafe = (canvas: HTMLCanvasElement) => canvas.getContext('2d')
 
 type SelectionRect = { left: number; top: number; width: number; height: number }
 
-export default function DocumentViewer({ source, zoom, currentPage, inverted, areaSelectionEnabled, onPdfReady, onSelect, onTextAi, onTextTranslate }: Props) {
+export default function DocumentViewer({ source, zoom, currentPage, inverted, areaSelectionEnabled, onPdfReady, onSelect, onTextAi, onTextTranslate, highlights, onHighlight }: Props) {
   const { t, pack } = useI18n()
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null)
   const [error, setError] = useState('')
@@ -87,6 +93,7 @@ export default function DocumentViewer({ source, zoom, currentPage, inverted, ar
   const [translation, setTranslation] = useState('')
   const [translating, setTranslating] = useState(false)
   const [copied, setCopied] = useState(false)
+  const dragRef = useRef<{ x: number; y: number; left: number; top: number } | null>(null)
   const renderRadius = zoom > 1.8 ? 1 : zoom > 1.2 ? 2 : 3
 
   useEffect(() => {
@@ -161,6 +168,9 @@ export default function DocumentViewer({ source, zoom, currentPage, inverted, ar
   }
 
   const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!areaSelectionEnabled && textAction && !(event.target as HTMLElement).closest('.text-action-popover')) {
+      setTextAction(null); setTranslation(''); window.getSelection()?.removeAllRanges()
+    }
     if (!areaSelectionEnabled || event.button !== 0 || !(event.target as HTMLElement).closest('.selectable-page')) return
     event.currentTarget.setPointerCapture(event.pointerId)
     const point = pointFromClient(event.clientX, event.clientY)
@@ -285,14 +295,15 @@ export default function DocumentViewer({ source, zoom, currentPage, inverted, ar
         : pdf && Array.from({ length: pdf.numPages }, (_, index) => {
           const pageNumber = index + 1
           return Math.abs(pageNumber - currentPage) <= renderRadius
-            ? <PdfPage key={pageNumber} pdf={pdf} pageNumber={pageNumber} zoom={zoom} inverted={inverted} textSelectionEnabled={!areaSelectionEnabled} />
+            ? <PdfPage key={pageNumber} pdf={pdf} pageNumber={pageNumber} zoom={zoom} inverted={inverted} textSelectionEnabled={!areaSelectionEnabled} highlights={highlights} />
             : <div key={pageNumber} className="pdf-page-placeholder" data-page-number={pageNumber} style={{ width: 500 * zoom, height: 710 * zoom }}><span>{pageNumber}</span></div>
         })}
       {selectionRect && <div className="document-selection-rect" style={selectionRect} />}
-      {!areaSelectionEnabled && textAction && <div className="text-action-popover" style={{ left: textAction.left, top: textAction.top }} onPointerDown={(event) => event.stopPropagation()} onPointerUp={(event) => event.stopPropagation()}>
+      {!areaSelectionEnabled && textAction && <div className="text-action-popover" style={{ left: textAction.left, top: textAction.top }} onPointerDown={(event) => { event.stopPropagation(); if ((event.target as HTMLElement).closest('.text-action-buttons')) dragRef.current = { x: event.clientX, y: event.clientY, left: textAction.left, top: textAction.top } }} onPointerMove={(event) => { if (!dragRef.current) return; event.currentTarget.setPointerCapture(event.pointerId); setTextAction((item) => item && ({ ...item, left: dragRef.current!.left + event.clientX - dragRef.current!.x, top: dragRef.current!.top + event.clientY - dragRef.current!.y })) }} onPointerUp={(event) => { dragRef.current = null; event.stopPropagation() }}>
         <div className="text-action-buttons">
           <button onClick={async () => { await navigator.clipboard.writeText(textAction.text); setCopied(true) }}>{copied ? <Check size={14} /> : <Copy size={14} />}{t('copy')}</button>
           <button onClick={translateSelectedText} disabled={translating}><Languages size={14} />{t('translate')}</button>
+          <button onClick={() => { onHighlight({ page: currentPage, text: textAction.text, color: '#ffe066' }); setTextAction(null); window.getSelection()?.removeAllRanges() }}><Highlighter size={14} />高亮</button>
           <button onClick={() => { onTextAi(textAction.text); setTextAction(null); window.getSelection()?.removeAllRanges() }}><Sparkles size={14} />AI</button>
           <button className="close-text-action" onClick={() => { setTextAction(null); window.getSelection()?.removeAllRanges() }}><X size={14} /></button>
         </div>

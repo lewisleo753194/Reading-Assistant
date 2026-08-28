@@ -19,6 +19,17 @@ const taskPrompts = {
   custom: '按照用户的具体要求处理材料。',
 }
 
+function buildRagContext(text, query) {
+  const source = String(text || '').trim()
+  if (!source) return ''
+  const chunks = source.match(/[\s\S]{1,2400}/g) || []
+  const terms = String(query || '').toLocaleLowerCase().match(/[\p{L}\p{N}]{2,}/gu) || []
+  const scored = chunks.map((chunk, index) => ({ chunk, index, score: terms.reduce((sum, term) => sum + (chunk.toLocaleLowerCase().includes(term) ? 1 : 0), 0) }))
+  const relevant = scored.sort((a, b) => b.score - a.score || a.index - b.index).slice(0, 8).sort((a, b) => a.index - b.index)
+  const summary = chunks.length > 1 ? `${chunks[0]}\n…\n${chunks.at(-1)}` : chunks[0]
+  return `【文档摘要（首尾）】\n${summary.slice(0, 4200)}\n\n【相关片段】\n${relevant.map((item) => `[片段 ${item.index + 1}]\n${item.chunk}`).join('\n\n')}`
+}
+
 function sanitizeSkills(value) {
   if (!Array.isArray(value)) return []
   return value.slice(0, 24).map((skill) => ({
@@ -151,24 +162,23 @@ app.post('/api/ai', async (req, res) => {
     : []
   const selectionHasImages = Boolean(req.body?.selectionHasImages || selectionImages.length)
   const reasoningRequested = Boolean(req.body?.deepThinking && req.body?.aiConfig?.reasoningEnabled)
-  if (reasoningRequested && selectionHasImages) {
-    return res.status(400).json({ error: '当前深度思考模式不能处理图片选区。请关闭“深度思考”后重试，应用将改用视觉模型。' })
-  }
   const hasTextInput = Boolean(String(selectedText).trim() || String(documentText).trim())
-  const useReasoning = reasoningRequested && hasTextInput
-  const useVision = Boolean(req.body?.aiConfig?.visionEnabled && selectionImages.length && !useReasoning)
+  const useReasoning = reasoningRequested
+  const useVision = Boolean(selectionImages.length)
   if (!selectedText && !documentText && !useVision) return res.status(400).json({ error: '没有可供分析的内容。请先选择文字或框选公式、图片区域。' })
 
   const safeHistory = Array.isArray(history) ? history.slice(-8).filter((item) => item && ['user', 'assistant'].includes(item.role)) : []
   const context = includeContext && documentText
-    ? `\n\n【全文上下文】\n${String(documentText).slice(0, 90000)}`
+    ? `\n\n${buildRagContext(documentText, `${instruction} ${selectedText}`)}`
     : ''
   const target = selectedText ? `【当前选中内容】\n${selectedText}` : useVision ? '【当前选中内容】请分析附带的视觉选区。' : '请处理全文。'
-  const taskPrompt = action === 'translate' ? `准确翻译目标内容为${responseLanguage}。保留术语、数字和逻辑层次；先给译文，必要时补充极简术语说明。` : (taskPrompts[action] || taskPrompts.custom)
+  const singleWord = action === 'translate' && /^[A-Za-z][A-Za-z'-]*$/.test(String(selectedText).trim())
+  const taskPrompt = action === 'translate' ? `准确翻译目标内容为${responseLanguage}。保留术语、数字和逻辑层次；先给译文，必要时补充极简术语说明。${singleWord ? '这是单词翻译，必须同时给出标准美式英语 IPA 音标。' : ''}` : (taskPrompts[action] || taskPrompts.custom)
   let userPrompt = `${taskPrompt}\n【回答语言】${responseLanguage}\n${instruction ? `【用户要求】\n${instruction}\n` : ''}${target}${context}`
 
   try {
-    const { apiKey, baseUrl, model } = resolveAiConfig(req.body, useReasoning ? 'reasoning' : useVision ? 'vision' : 'default')
+    let resolvedMode = useReasoning ? 'reasoning' : 'default'
+    let { apiKey, baseUrl, model } = resolveAiConfig(req.body, resolvedMode)
     if (!activeSkill && skills.length) {
       activeSkill = await selectSkillAutomatically({ apiKey, baseUrl, model, skills, action, instruction, selectedText, documentText })
     }
@@ -181,7 +191,9 @@ app.post('/api/ai', async (req, res) => {
           ...selectionImages.map((url) => ({ type: 'image_url', image_url: { url, detail: 'high' } })),
         ]
       : userPrompt
-    const response = await fetch(`${baseUrl}/chat/completions`, {
+    const requestController = new AbortController()
+    res.on('close', () => { if (!res.writableEnded) requestController.abort() })
+    const performRequest = () => fetch(`${baseUrl}/chat/completions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({
@@ -192,8 +204,13 @@ app.post('/api/ai', async (req, res) => {
           ...safeHistory.map(({ role, content }) => ({ role, content: String(content).slice(0, 12000) })),
           { role: 'user', content: userContent },
         ],
-      }),
+      }), signal: requestController.signal,
     })
+    let response = await performRequest()
+    if (!response.ok && useVision && req.body?.aiConfig?.visionEnabled && resolvedMode !== 'vision') {
+      resolvedMode = 'vision'; ({ apiKey, baseUrl, model } = resolveAiConfig(req.body, 'vision'))
+      response = await performRequest()
+    }
     const data = await response.json()
     if (!response.ok) throw new Error(data?.error?.message || `AI 服务返回 ${response.status}`)
     const content = data?.choices?.[0]?.message?.content

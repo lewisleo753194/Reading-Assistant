@@ -15,6 +15,10 @@ export type FileMemoryRecord = {
   zoom: number
   areaSelectionEnabled: boolean
   scope: 'selection' | 'document'
+  fileBlob?: Blob
+  documentText?: string
+  note?: string
+  highlights?: Array<{ id: string; page: number; text: string; color: string }>
 }
 
 export type FileMemorySummary = Pick<FileMemoryRecord, 'id' | 'fileName' | 'fileSize' | 'fileType' | 'lastModified' | 'updatedAt'> & { conversationCount: number }
@@ -62,6 +66,10 @@ export function deleteFileMemory(id: string) {
 
 export function clearFileMemories() {
   return runRequest<undefined>('readwrite', (store) => store.clear())
+}
+
+export function listFileMemoryRecords() {
+  return runRequest<FileMemoryRecord[]>('readonly', (store) => store.getAll())
 }
 
 export async function listFileMemories(): Promise<FileMemorySummary[]> {
