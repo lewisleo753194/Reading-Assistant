@@ -10,7 +10,7 @@ All notable changes to Raid are documented here.
 - Inline translations now render Markdown, and single-word prompts place American IPA beside the primary meaning without a redundant label.
 - Projects can retain an intentionally empty conversation list after their final conversation is deleted; a new conversation is created lazily only when the user asks AI another question.
 - Replaced browser drag-and-drop with grab-pointer movement and real Electron child tool windows, allowing floating modules to leave the main window and follow native click-to-front ordering.
-- Floating tool windows now snap back into the left or right workspace column when released near the corresponding edge of the main window.
+- Floating tool windows show narrow left/right drop shadows while being dragged and dock only when the pointer itself is released inside one of those edge zones.
 - Normalized legacy panel layer values so in-window fallback panels also raise predictably when clicked.
 
 ### Changed

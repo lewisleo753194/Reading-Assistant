@@ -111,6 +111,7 @@ declare global {
     readingAssistant?: {
       selectSkillFolder: () => Promise<FolderImportResult>
       selectLanguageFolder: () => Promise<FolderImportResult>
+      movePanelWindow: (id: string, x: number, y: number) => void
     }
   }
 }

@@ -70,6 +70,15 @@ async function selectImportFolder(kind) {
 
 ipcMain.handle('reading-assistant:select-skill-folder', () => selectImportFolder('skill'))
 ipcMain.handle('reading-assistant:select-language-folder', () => selectImportFolder('language'))
+ipcMain.on('reading-assistant:move-panel-window', (event, payload) => {
+  if (!mainWindow) return
+  const x = Math.round(Number(payload?.x))
+  const y = Math.round(Number(payload?.y))
+  const panelWindow = BrowserWindow.fromWebContents(event.sender)
+  if (!panelWindow || panelWindow.isDestroyed() || panelWindow.getParentWindow() !== mainWindow) return
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return
+  panelWindow.setPosition(x, y, false)
+})
 
 async function createWindow() {
   logStartup('Starting local service')
@@ -109,7 +118,7 @@ async function createWindow() {
           minWidth: 260,
           minHeight: 220,
           backgroundColor: '#252526',
-          webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
+          webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, preload: path.join(dirname, 'preload.cjs') },
         },
       }
     }
@@ -124,7 +133,7 @@ async function createWindow() {
     }
   })
   await mainWindow.loadURL(`http://127.0.0.1:${started.port}`)
-  const importBridgeReady = await mainWindow.webContents.executeJavaScript("Boolean(window.readingAssistant?.selectSkillFolder && window.readingAssistant?.selectLanguageFolder)")
+  const importBridgeReady = await mainWindow.webContents.executeJavaScript("Boolean(window.readingAssistant?.selectSkillFolder && window.readingAssistant?.selectLanguageFolder && window.readingAssistant?.movePanelWindow)")
   logStartup(`Folder import bridge ready: ${importBridgeReady}`)
   console.log(`Raid folder import bridge: ${importBridgeReady ? 'ready' : 'unavailable'}`)
   logStartup('Reader interface loaded')

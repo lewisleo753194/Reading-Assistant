@@ -314,8 +314,12 @@ button:disabled { opacity: .38; cursor: not-allowed; }
 .panel-window-body { margin:0; overflow:hidden; background:var(--panel); }
 .panel-window-body #panel-window-root { width:100vw; height:100vh; }
 .panel-window-body .workspace-panel.dock-float { position:fixed; inset:0; width:100%!important; height:100%!important; min-width:0; min-height:0; border:0; border-radius:0; box-shadow:none; resize:none; }
-.panel-window-body .workspace-panel-header { -webkit-app-region:drag; cursor:grab; }
-.panel-window-body .workspace-panel-header button,.panel-window-body .workspace-panel-header [role="button"] { -webkit-app-region:no-drag; }
+.panel-window-body .workspace-panel-header { cursor:grab; }
+.dock-drop-zones { position:fixed; inset:0; z-index:2147483000; pointer-events:none; }
+.dock-drop-zones i { position:absolute; top:0; bottom:0; width:18px; opacity:.42; transition:opacity .1s,box-shadow .1s,background .1s; }
+.dock-drop-zones i:first-child { left:0; background:linear-gradient(90deg,rgba(0,0,0,.32),transparent); box-shadow:inset 2px 0 rgba(255,255,255,.08); }
+.dock-drop-zones i:last-child { right:0; background:linear-gradient(270deg,rgba(0,0,0,.32),transparent); box-shadow:inset -2px 0 rgba(255,255,255,.08); }
+.dock-drop-zones i.active { opacity:1; background:var(--accent-soft); box-shadow:inset 0 0 0 2px var(--accent),0 0 18px var(--accent-soft); }
 .dock-splitter { height:7px; flex:none; cursor:row-resize; touch-action:none; position:relative; background:transparent; }.dock-splitter::after { content:""; position:absolute; left:7px; right:7px; top:3px; height:1px; background:var(--line); transition:.14s; }.dock-splitter:hover::after,.resizing-dock-split .dock-splitter::after { top:2px; height:2px; background:var(--accent); }
 .project-explorer { height:100%; overflow:auto; padding:8px; }
 .project-item { border-radius:7px; margin-bottom:4px; }.project-item.active { background:var(--surface-2); }.project-title,.project-conversations button { width:100%; min-width:0; border:0; background:transparent; color:var(--text); display:flex; align-items:center; gap:7px; text-align:left; padding:8px; border-radius:6px; cursor:pointer; }
