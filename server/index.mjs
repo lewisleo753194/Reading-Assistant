@@ -19,15 +19,91 @@ const taskPrompts = {
   custom: '按照用户的具体要求处理材料。',
 }
 
-function buildRagContext(text, query) {
+function parseDocumentPages(text) {
   const source = String(text || '').trim()
-  if (!source) return ''
-  const chunks = source.match(/[\s\S]{1,2400}/g) || []
-  const terms = String(query || '').toLocaleLowerCase().match(/[\p{L}\p{N}]{2,}/gu) || []
-  const scored = chunks.map((chunk, index) => ({ chunk, index, score: terms.reduce((sum, term) => sum + (chunk.toLocaleLowerCase().includes(term) ? 1 : 0), 0) }))
-  const relevant = scored.sort((a, b) => b.score - a.score || a.index - b.index).slice(0, 8).sort((a, b) => a.index - b.index)
-  const summary = chunks.length > 1 ? `${chunks[0]}\n…\n${chunks.at(-1)}` : chunks[0]
-  return `【文档摘要（首尾）】\n${summary.slice(0, 4200)}\n\n【相关片段】\n${relevant.map((item) => `[片段 ${item.index + 1}]\n${item.chunk}`).join('\n\n')}`
+  const matches = [...source.matchAll(/\[第\s*(\d+)\s*页\]\s*\n?/g)]
+  if (!matches.length) return [{ page: 1, text: source }]
+  return matches.map((match, index) => ({ page: Number(match[1]), text: source.slice((match.index || 0) + match[0].length, matches[index + 1]?.index ?? source.length).trim() }))
+}
+
+function queryTerms(value) {
+  const normalized = String(value || '').toLocaleLowerCase()
+  const words = normalized.match(/[a-z0-9][a-z0-9_-]{2,35}/g) || []
+  const cjk = (normalized.match(/\p{Script=Han}{3,}/gu) || []).flatMap((run) =>
+    Array.from({ length: Math.min(24, Math.max(0, run.length - 2)) }, (_, index) => run.slice(index, index + 3)))
+  return [...new Set([...words, ...cjk])].slice(0, 120)
+}
+
+function pageChunks(pages) {
+  return pages.flatMap((item) => {
+    const source = item.text.trim()
+    if (!source) return []
+    const chunks = []
+    for (let start = 0; start < source.length; start += 1500) {
+      chunks.push({ page: item.page, start, text: source.slice(start, start + 1800) })
+      if (start + 1800 >= source.length) break
+    }
+    return chunks
+  })
+}
+
+function rankChunks(chunks, terms, anchors) {
+  return chunks.map((chunk) => {
+    const haystack = chunk.text.toLocaleLowerCase()
+    const relevance = terms.reduce((score, term) => score + (haystack.includes(term) ? Math.min(12, term.length) : 0), 0)
+    const anchorBoost = anchors.has(chunk.page) ? 80 : anchors.has(chunk.page - 1) || anchors.has(chunk.page + 1) ? 30 : 0
+    return { ...chunk, score: relevance + anchorBoost }
+  }).sort((a, b) => b.score - a.score || a.page - b.page || a.start - b.start)
+}
+
+function buildDocumentContext(text, mode, anchorPages, query, action) {
+  const pages = parseDocumentPages(text)
+  const anchors = new Set((Array.isArray(anchorPages) ? anchorPages : []).map(Number).filter(Number.isFinite))
+  const nearby = new Set([...anchors].flatMap((page) => [page - 1, page, page + 1]).filter((page) => page > 0))
+  const terms = queryTerms(query)
+  const chunks = pageChunks(pages)
+  const overview = pages.map((item) => {
+    const compact = item.text.replace(/\s+/g, ' ').trim()
+    const excerpt = compact.length <= 360 ? compact : `${compact.slice(0, 240)} … ${compact.slice(-100)}`
+    return `[第 ${item.page} 页概览] ${excerpt}`
+  }).join('\n')
+  const renderChunks = (items) => items.map((item) => `[第 ${item.page} 页精确片段]\n${item.text}`).join('\n\n')
+
+  if (mode === 'selection') {
+    const local = chunks.filter((item) => nearby.has(item.page))
+    const localKeys = new Set(local.map((item) => `${item.page}:${item.start}`))
+    const related = rankChunks(chunks, terms, anchors).filter((item) => !localKeys.has(`${item.page}:${item.start}`) && item.score > 0).slice(0, 6)
+    return `【全文结构概览】\n${overview}\n\n【选区及相邻页精确内容】\n${renderChunks(local) || '（未能确定选区页码）'}\n\n【全文中与问题相关的精确片段】\n${renderChunks(related) || '（没有检索到额外的高相关片段）'}`
+  }
+
+  const fullText = pages.map((item) => `[第 ${item.page} 页]\n${item.text}`).join('\n\n')
+  if (fullText.length <= 55000) return `【全文结构概览】\n${overview}\n\n【全文精确内容】\n${fullText}`
+  const ranked = rankChunks(chunks, terms, anchors).filter((item) => item.score > 0).slice(0, 14)
+  const representativeIndexes = Array.from({ length: Math.min(10, chunks.length) }, (_, index) => Math.round(index * (chunks.length - 1) / Math.max(1, Math.min(10, chunks.length) - 1)))
+  const combined = [...ranked, ...representativeIndexes.map((index) => chunks[index])]
+  const seen = new Set()
+  const exact = combined.filter((item) => {
+    const key = `${item.page}:${item.start}`
+    if (seen.has(key)) return false
+    seen.add(key); return true
+  }).slice(0, action === 'summarize' ? 24 : 18)
+  return `【全文结构概览】\n${overview}\n\n【检索命中与跨全文分布的精确片段】\n${renderChunks(exact)}`
+}
+
+function groundPageTags(content, documentText, anchorPages) {
+  const pages = parseDocumentPages(documentText)
+  const pageMap = new Map(pages.map((item) => [item.page, item.text]))
+  let grounded = String(content)
+    .replace(/\[\[SOURCE:(\d+)\|[\s\S]*?\]\]/g, (_tag, pageValue) => pageMap.has(Number(pageValue)) ? `[[PAGE:${Number(pageValue)}]]` : '')
+    .replace(/\[\[PAGE:(\d+)\]\]/g, (_tag, pageValue) => pageMap.has(Number(pageValue)) ? `[[PAGE:${Number(pageValue)}]]` : '')
+  if (grounded.includes('[[PAGE:') || !pages.length) return grounded
+  const requestedPages = new Set((Array.isArray(anchorPages) ? anchorPages : []).map(Number))
+  const normalizedAnswer = grounded.toLocaleLowerCase()
+  const terms = queryTerms(normalizedAnswer)
+  const ranked = pages.map((item) => ({ ...item, score: terms.reduce((sum, term) => sum + (item.text.toLocaleLowerCase().includes(term) ? term.length : 0), 0), requested: requestedPages.has(item.page) ? 30 : 0 })).sort((a, b) => (b.score + b.requested) - (a.score + a.requested))
+  const source = ranked[0]
+  if (!source?.text) return grounded
+  return `${grounded}\n\n[[PAGE:${source.page}]]`
 }
 
 function sanitizeSkills(value) {
@@ -160,7 +236,6 @@ app.post('/api/ai', async (req, res) => {
   const selectionImages = Array.isArray(req.body?.selectionImages)
     ? req.body.selectionImages.filter((value) => typeof value === 'string' && /^data:image\/(png|jpeg|webp);base64,/.test(value)).slice(0, 4)
     : []
-  const selectionHasImages = Boolean(req.body?.selectionHasImages || selectionImages.length)
   const reasoningRequested = Boolean(req.body?.deepThinking && req.body?.aiConfig?.reasoningEnabled)
   const hasTextInput = Boolean(String(selectedText).trim() || String(documentText).trim())
   const useReasoning = reasoningRequested
@@ -168,13 +243,14 @@ app.post('/api/ai', async (req, res) => {
   if (!selectedText && !documentText && !useVision) return res.status(400).json({ error: '没有可供分析的内容。请先选择文字或框选公式、图片区域。' })
 
   const safeHistory = Array.isArray(history) ? history.slice(-8).filter((item) => item && ['user', 'assistant'].includes(item.role)) : []
+  const contextMode = req.body?.contextMode === 'document' ? 'document' : 'selection'
   const context = includeContext && documentText
-    ? `\n\n${buildRagContext(documentText, `${instruction} ${selectedText}`)}`
+    ? `\n\n${buildDocumentContext(documentText, contextMode, req.body?.anchorPages, `${instruction}\n${selectedText}`, action)}`
     : ''
   const target = selectedText ? `【当前选中内容】\n${selectedText}` : useVision ? '【当前选中内容】请分析附带的视觉选区。' : '请处理全文。'
   const singleWord = action === 'translate' && /^[A-Za-z][A-Za-z'-]*$/.test(String(selectedText).trim())
   const taskPrompt = action === 'translate' ? `准确翻译目标内容为${responseLanguage}。保留术语、数字和逻辑层次；先给译文，必要时补充极简术语说明。${singleWord ? '这是单词翻译，必须同时给出标准美式英语 IPA 音标。' : ''}` : (taskPrompts[action] || taskPrompts.custom)
-  let userPrompt = `${taskPrompt}\n【回答语言】${responseLanguage}\n${instruction ? `【用户要求】\n${instruction}\n` : ''}${target}${context}`
+  let userPrompt = `${taskPrompt}\n【回答语言】${responseLanguage}\n${instruction ? `【用户要求】\n${instruction}\n` : ''}${target}${context}\n\n【页码标注规则】回答中凡是提及与文中关系密切的事实、观点或结论，只需紧跟页码标注，格式严格为 [[PAGE:页码]]。页码必须来自材料中的页码标记；不要附带引文，不要写 Source/来源，不要编造页码。`
 
   try {
     let resolvedMode = useReasoning ? 'reasoning' : 'default'
@@ -215,7 +291,7 @@ app.post('/api/ai', async (req, res) => {
     if (!response.ok) throw new Error(data?.error?.message || `AI 服务返回 ${response.status}`)
     const content = data?.choices?.[0]?.message?.content
     if (!content) throw new Error('AI 服务未返回内容')
-    res.json({ content, model: data.model || model, skillName: activeSkill?.name || '' })
+    res.json({ content: groundPageTags(content, documentText, req.body?.anchorPages), model: data.model || model, skillName: activeSkill?.name || '' })
   } catch (error) {
     res.status(502).json({ error: error instanceof Error ? error.message : 'AI 服务请求失败' })
   }

@@ -51,15 +51,17 @@ function PdfPage({ pdf, pageNumber, zoom, inverted, textSelectionEnabled, highli
       container.style.setProperty('--scale-round-y', '1px')
       layer = new TextLayer({ textContentSource: await page.getTextContent(), container, viewport })
       await layer.render()
-      const pageHighlights = highlights.filter((item) => item.page === pageNumber)
+      const legacyHighlights = highlights.filter((item) => item.page === pageNumber && !item.regions?.length)
       container.querySelectorAll('span').forEach((span) => {
-        if (pageHighlights.some((item) => item.text.includes(span.textContent?.trim() || '') && (span.textContent?.trim().length || 0) > 2)) span.classList.add('saved-highlight')
+        const spanText = span.textContent?.trim() || ''
+        if (spanText && legacyHighlights.some((item) => item.text.includes(spanText) || spanText.includes(item.text))) span.classList.add('saved-highlight')
       })
     }).catch(() => undefined)
     return () => { active = false; layer?.cancel(); container.replaceChildren() }
   }, [pdf, pageNumber, textSelectionEnabled, zoom, highlights])
 
-  return <SelectableCanvas pageNumber={pageNumber} render={render} onSelect={() => undefined} selectionEnabled={false} inverted={inverted} overlay={<div ref={textLayerRef} className={`text-layer ${textSelectionEnabled ? 'enabled' : ''}`} />} />
+  const pageRegions = highlights.flatMap((highlight) => (highlight.regions || []).filter((item) => item.page === pageNumber).map((item) => ({ ...item.region, color: highlight.color })))
+  return <SelectableCanvas pageNumber={pageNumber} render={render} onSelect={() => undefined} selectionEnabled={false} inverted={inverted} overlay={<><div className="saved-highlight-layer">{pageRegions.map((region, index) => <i key={index} style={{ left: `${region.left * 100}%`, top: `${region.top * 100}%`, width: `${region.width * 100}%`, height: `${region.height * 100}%`, background: region.color }} />)}</div><div ref={textLayerRef} className={`text-layer ${textSelectionEnabled ? 'enabled' : ''}`} /></>} />
 }
 
 function ImagePage({ source, zoom, inverted }: { source: SourceFile; zoom: number; inverted: boolean }) {
@@ -89,7 +91,7 @@ export default function DocumentViewer({ source, zoom, currentPage, inverted, ar
   const rectRef = useRef<SelectionRect | null>(null)
   const lastPointerRef = useRef<{ x: number; y: number } | null>(null)
   const autoScrollFrameRef = useRef<number | null>(null)
-  const [textAction, setTextAction] = useState<{ text: string; left: number; top: number } | null>(null)
+  const [textAction, setTextAction] = useState<{ text: string; left: number; top: number; regions: SelectionResult['regions'] } | null>(null)
   const [translation, setTranslation] = useState('')
   const [translating, setTranslating] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -260,12 +262,25 @@ export default function DocumentViewer({ source, zoom, currentPage, inverted, ar
       const text = selection.toString().trim()
       if (!text) return setTextAction(null)
       const bounds = range.getBoundingClientRect()
+      const regions: SelectionResult['regions'] = []
+      Array.from(range.getClientRects()).forEach((rect) => {
+        const pageElement = Array.from(stack.querySelectorAll<HTMLElement>('.selectable-page')).find((candidate) => {
+          const pageBounds = candidate.getBoundingClientRect()
+          return rect.right > pageBounds.left && rect.left < pageBounds.right && rect.bottom > pageBounds.top && rect.top < pageBounds.bottom
+        })
+        if (!pageElement) return
+        const pageBounds = pageElement.getBoundingClientRect()
+        const left = Math.max(0, (rect.left - pageBounds.left) / pageBounds.width)
+        const top = Math.max(0, (rect.top - pageBounds.top) / pageBounds.height)
+        regions.push({ page: Number(pageElement.dataset.pageNumber), region: { left, top, width: Math.min(1 - left, rect.width / pageBounds.width), height: Math.min(1 - top, rect.height / pageBounds.height) } })
+      })
       setTranslation('')
       setCopied(false)
       setTextAction({
         text,
         left: Math.max(12, Math.min(window.innerWidth - 250, bounds.left + bounds.width / 2 - 110)),
         top: Math.max(12, Math.min(window.innerHeight - 150, bounds.bottom + 9)),
+        regions,
       })
     }, 0)
   }
@@ -303,7 +318,7 @@ export default function DocumentViewer({ source, zoom, currentPage, inverted, ar
         <div className="text-action-buttons">
           <button onClick={async () => { await navigator.clipboard.writeText(textAction.text); setCopied(true) }}>{copied ? <Check size={14} /> : <Copy size={14} />}{t('copy')}</button>
           <button onClick={translateSelectedText} disabled={translating}><Languages size={14} />{t('translate')}</button>
-          <button onClick={() => { onHighlight({ page: currentPage, text: textAction.text, color: '#ffe066' }); setTextAction(null); window.getSelection()?.removeAllRanges() }}><Highlighter size={14} />高亮</button>
+          <button onClick={() => { onHighlight({ page: textAction.regions[0]?.page || currentPage, text: textAction.text, color: '#ffe066', regions: textAction.regions }); setTextAction(null); window.getSelection()?.removeAllRanges() }}><Highlighter size={14} />高亮</button>
           <button onClick={() => { onTextAi(textAction.text); setTextAction(null); window.getSelection()?.removeAllRanges() }}><Sparkles size={14} />AI</button>
           <button className="close-text-action" onClick={() => { setTextAction(null); window.getSelection()?.removeAllRanges() }}><X size={14} /></button>
         </div>

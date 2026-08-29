@@ -17,7 +17,9 @@ export type FileMemoryRecord = {
   scope: 'selection' | 'document'
   fileBlob?: Blob
   documentText?: string
+  documentTextVersion?: number
   note?: string
+  noteAssets?: Record<string, string>
   highlights?: Array<{ id: string; page: number; text: string; color: string }>
 }
 
@@ -41,10 +43,12 @@ function runRequest<T>(mode: IDBTransactionMode, operation: (store: IDBObjectSto
   return openDatabase().then((database) => new Promise<T>((resolve, reject) => {
     const transaction = database.transaction(storeName, mode)
     const request = operation(transaction.objectStore(storeName))
-    request.onsuccess = () => resolve(request.result)
+    let result: T
+    request.onsuccess = () => { result = request.result }
     request.onerror = () => reject(request.error || new Error('文件记忆操作失败。'))
-    transaction.oncomplete = () => database.close()
-    transaction.onerror = () => database.close()
+    transaction.oncomplete = () => { database.close(); resolve(result) }
+    transaction.onerror = () => { database.close(); reject(transaction.error || new Error('文件记忆事务失败。')) }
+    transaction.onabort = () => { database.close(); reject(transaction.error || new Error('文件记忆事务已中止。')) }
   }))
 }
 

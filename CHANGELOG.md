@@ -4,6 +4,19 @@ All notable changes to Reading Assistant are documented here.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-29
+
+### Fixed
+
+- Rebuilt all project, selection, assistant, and notes surfaces on one persistent panel framework with simultaneous docked panels, draggable splitters, edge docking, movable/resizable floating windows, and proper document reflow.
+- Removed the remaining file-memory controls from Settings while keeping automatic project restoration.
+- Fixed pasted-image and ink note storage so the editor uses compact asset references and exported Markdown contains valid image data.
+- Unified the light and dark accent color, restored sun/moon theme icons, simplified empty-state hints, and removed the duplicate project creation entry.
+- Added live Markdown rendering, a slider-style reasoning control, compact reader toolbar inputs, and stronger dark-document contrast.
+- Moved project deletion into Settings with an explicit data-loss warning and added per-project conversation/note shortcuts.
+- Replaced sampled document context with full-page indexing: selection requests receive a whole-document miniature plus exact neighboring pages, while document requests receive exact full text and grounded clickable source tags.
+- Persisted highlights as exact page-relative rectangles, moved text/area selection controls to the left of the reader toolbar, and rendered floating panels at the application root so workspace boundaries no longer clip them.
+
 ## [0.4.0-beta.1] - 2026-08-28
 
 ### Added

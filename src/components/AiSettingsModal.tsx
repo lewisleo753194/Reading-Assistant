@@ -15,7 +15,7 @@ type Props = {
   languages: LanguagePack[]
   memorySettings: MemorySettings
   userMemory: string
-  fileMemories: FileMemorySummary[]
+  projects: FileMemorySummary[]
   onClose: () => void
   onSave: (config: AiConfig) => void
   onImportSkill: () => Promise<boolean>
@@ -24,11 +24,10 @@ type Props = {
   onLanguageChange: (language: AppLanguage) => void
   onMemorySettingsChange: (settings: MemorySettings) => void
   onUserMemoryChange: (memory: string) => void
-  onDeleteFileMemory: (id: string) => Promise<void>
-  onDeleteAllFileMemories: () => Promise<void>
+  onDeleteProject: (id: string) => Promise<void>
 }
 
-export default function AiSettingsModal({ value, serverConfigured, skills, language, languages, memorySettings, userMemory, fileMemories, onClose, onSave, onImportSkill, onRemoveSkill, onImportLanguage, onLanguageChange, onMemorySettingsChange, onUserMemoryChange, onDeleteFileMemory, onDeleteAllFileMemories }: Props) {
+export default function AiSettingsModal({ value, serverConfigured, skills, language, languages, memorySettings, userMemory, projects, onClose, onSave, onImportSkill, onRemoveSkill, onImportLanguage, onLanguageChange, onMemorySettingsChange, onUserMemoryChange, onDeleteProject }: Props) {
   const { t, pack } = useI18n()
   const [tab, setTab] = useState<SettingsTab>('models')
   const [draft, setDraft] = useState(value)
@@ -116,10 +115,7 @@ export default function AiSettingsModal({ value, serverConfigured, skills, langu
         </section>}
 
         {tab === 'memory' && <section className="memory-settings">
-          <section className="memory-card">
-            <div className="memory-section-heading"><span>{t('rememberedFiles')} · {fileMemories.length}</span>{fileMemories.length > 0 && <button onClick={() => { if (window.confirm(t('confirmDeleteAllFileMemory'))) void onDeleteAllFileMemories() }}><Trash2 size={13} />{t('deleteAll')}</button>}</div>
-            <div className="memory-file-list">{fileMemories.length ? fileMemories.map((memory) => <article key={memory.id}><Database size={15} /><div><strong>{memory.fileName}</strong><small>{memory.conversationCount} {t('memoryConversations')} · {new Date(memory.updatedAt).toLocaleString()}</small></div><button onClick={() => { if (window.confirm(t('confirmDeleteFileMemory'))) void onDeleteFileMemory(memory.id) }} title={t('deleteFileMemory')}><Trash2 size={14} /></button></article>) : <div className="memory-empty">{t('noFileMemory')}</div>}</div>
-          </section>
+          <section className="project-memory-list"><div className="memory-section-heading"><span>{pack.code === 'en-US' ? 'Project memory' : '项目记忆'} · {projects.length}</span></div><div className="memory-file-list">{projects.map((project) => <article key={project.id}><Database size={15} /><div><strong>{project.fileName}</strong><small>{project.conversationCount} {t('memoryConversations')} · {new Date(project.updatedAt).toLocaleString()}</small></div><button onClick={() => { if (window.confirm(pack.code === 'en-US' ? 'Delete this project and all of its data?' : '确定删除此项目及其全部数据吗？')) void onDeleteProject(project.id) }}><Trash2 size={14} /></button></article>)}</div></section>
           <section className="memory-card">
             <label className="vision-toggle"><input type="checkbox" checked={memorySettings.userMemoryEnabled} onChange={(event) => onMemorySettingsChange({ ...memorySettings, userMemoryEnabled: event.target.checked })} /><span className="vision-switch" aria-hidden="true" /><span><strong>{t('userMemory')}</strong><small>{t('userMemoryHelp')}</small></span></label>
             <textarea className="user-memory-editor" value={userMemory} onChange={(event) => onUserMemoryChange(event.target.value)} placeholder={t('userMemoryPlaceholder')} />
@@ -133,7 +129,7 @@ export default function AiSettingsModal({ value, serverConfigured, skills, langu
 
         {message && <div className={`settings-message ${message.type}`}>{message.type === 'ok' ? <CheckCircle2 size={15} /> : <X size={15} />}<span>{message.text}</span></div>}
       </div>
-      <div className="settings-footer">{tab === 'models' ? <><button className="secondary-button" disabled={testing} onClick={testConnection}>{testing && <LoaderCircle className="spin" size={15} />}{t('test')}</button><button className="save-button" onClick={save}>{t('save')}</button></> : <button className="save-button" onClick={onClose}>{t('close')}</button>}</div>
+      {tab === 'models' && <div className="settings-footer"><button className="secondary-button" disabled={testing} onClick={testConnection}>{testing && <LoaderCircle className="spin" size={15} />}{t('test')}</button><button className="save-button" onClick={save}>{t('save')}</button></div>}
     </section>
   </div>
 }

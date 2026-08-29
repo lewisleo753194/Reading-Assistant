@@ -55,6 +55,7 @@ export type DocumentHighlight = {
   page: number
   text: string
   color: string
+  regions?: SelectionResult['regions']
 }
 
 export type FolderImportResult = {

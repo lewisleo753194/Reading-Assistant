@@ -15,7 +15,7 @@
     "node": ">=20"
   },
   "private": true,
-  "version": "0.4.0-beta.1",
+  "version": "0.4.0",
   "type": "module",
   "main": "electron/main.mjs",
   "scripts": {
@@ -34,7 +34,7 @@
     "asar": true,
     "electronDist": "node_modules/electron/dist",
     "directories": {
-      "output": "release-0.4.0-beta.1"
+      "output": "release-0.4.0"
     },
     "files": [
       "dist/**/*",

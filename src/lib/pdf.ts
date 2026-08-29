@@ -12,9 +12,9 @@ export function getSampledPageNumbers(total: number, maximum: number) {
   return Array.from(new Set(Array.from({ length: maximum }, (_, index) => Math.round(index * (total - 1) / (maximum - 1)) + 1)))
 }
 
-export async function extractPdfText(pdf: PDFDocumentProxy, onProgress?: (done: number, total: number) => void, maximumCharacters = 100000) {
+export async function extractPdfText(pdf: PDFDocumentProxy, onProgress?: (done: number, total: number) => void, maximumCharacters = Number.POSITIVE_INFINITY) {
   const pages: string[] = []
-  const pageNumbers = getSampledPageNumbers(pdf.numPages, 72)
+  const pageNumbers = Array.from({ length: pdf.numPages }, (_, index) => index + 1)
   let characters = 0
   for (let index = 0; index < pageNumbers.length; index += 1) {
     const pageNumber = pageNumbers[index]
