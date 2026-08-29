@@ -12,7 +12,7 @@ export default class AppErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
-    console.error('Reading Assistant UI error', error, info)
+    console.error('Raid UI error', error, info)
   }
 
   render() {

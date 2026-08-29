@@ -249,7 +249,7 @@ app.post('/api/ai', async (req, res) => {
     : ''
   const target = selectedText ? `【当前选中内容】\n${selectedText}` : useVision ? '【当前选中内容】请分析附带的视觉选区。' : '请处理全文。'
   const singleWord = action === 'translate' && /^[A-Za-z][A-Za-z'-]*$/.test(String(selectedText).trim())
-  const taskPrompt = action === 'translate' ? `准确翻译目标内容为${responseLanguage}。保留术语、数字和逻辑层次；先给译文，必要时补充极简术语说明。${singleWord ? '这是单词翻译，必须同时给出标准美式英语 IPA 音标。' : ''}` : (taskPrompts[action] || taskPrompts.custom)
+  const taskPrompt = action === 'translate' ? `准确翻译目标内容为${responseLanguage}。保留术语、数字和逻辑层次；先给译文，必要时补充极简术语说明。${singleWord ? '目标是单个英文单词：第一行必须将原词、标准美式 IPA 和主要词义写在同一行；不要单独设置音标段落，也不要出现“标准美音音标”“美式音标”或“音标”等说明标签。' : ''}` : (taskPrompts[action] || taskPrompts.custom)
   let userPrompt = `${taskPrompt}\n【回答语言】${responseLanguage}\n${instruction ? `【用户要求】\n${instruction}\n` : ''}${target}${context}\n\n【页码标注规则】回答中凡是提及与文中关系密切的事实、观点或结论，只需紧跟页码标注，格式严格为 [[PAGE:页码]]。页码必须来自材料中的页码标记；不要附带引文，不要写 Source/来源，不要编造页码。`
 
   try {
@@ -293,6 +293,7 @@ app.post('/api/ai', async (req, res) => {
     if (!content) throw new Error('AI 服务未返回内容')
     res.json({ content: groundPageTags(content, documentText, req.body?.anchorPages), model: data.model || model, skillName: activeSkill?.name || '' })
   } catch (error) {
+    if (res.destroyed || error?.name === 'AbortError') return
     res.status(502).json({ error: error instanceof Error ? error.message : 'AI 服务请求失败' })
   }
 })
@@ -310,7 +311,7 @@ export function startServer(port = defaultPort) {
     const server = app.listen(port, '127.0.0.1', () => {
       const address = server.address()
       const actualPort = typeof address === 'object' && address ? address.port : port
-      console.log(`Reading Assistant server: http://127.0.0.1:${actualPort}`)
+      console.log(`Raid server: http://127.0.0.1:${actualPort}`)
       resolve({ server, port: actualPort })
     })
     server.once('error', reject)

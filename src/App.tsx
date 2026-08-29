@@ -27,6 +27,12 @@ import { loadAiConfig, loadDarkTheme, loadMemorySettings, loadPanelLayouts, load
 
 const makeId = () => crypto.randomUUID()
 const getCurrentTimestamp = () => Date.now()
+const nextPanelZ = (items: Record<PanelId, PanelLayout>) => Math.max(40, ...Object.values(items).map((item) => item.z)) + 1
+const normalizePanelZ = (items: Record<PanelId, PanelLayout>) => Object.fromEntries(
+  (Object.entries(items) as [PanelId, PanelLayout][])
+    .sort(([, first], [, second]) => first.z - second.z)
+    .map(([id, layout], index) => [id, { ...layout, z: 41 + index }]),
+) as Record<PanelId, PanelLayout>
 const normalizeAssistantMarkdown = (content: string) => content
   .replace(/```(?:latex|tex)\s*([\s\S]*?)```/gi, (_match, formula: string) => `\n$$\n${formula.trim()}\n$$\n`)
   .replace(/\\\[([\s\S]*?)\\\]/g, (_match, formula: string) => `\n$$\n${formula.trim()}\n$$\n`)
@@ -89,7 +95,7 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
   const [noteAssets, setNoteAssets] = useState<Record<string, string>>({})
   const [highlights, setHighlights] = useState<DocumentHighlight[]>([])
   const [collapsedProjectIds, setCollapsedProjectIds] = useState<Set<string>>(() => new Set())
-  const [panelLayouts, setPanelLayouts] = useState(loadPanelLayouts)
+  const [panelLayouts, setPanelLayouts] = useState(() => normalizePanelZ(loadPanelLayouts()))
   const abortControllersRef = useRef(new Map<string, AbortController>())
   const hasVisualSelection = aiConfig.visionEnabled && selections.some((item) => item.images.length > 0)
   const selectionReady = Boolean(selectedText || hasVisualSelection)
@@ -335,9 +341,9 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
       if (!active) return
       const restored = records.filter((record) => record.fileBlob).map((record): WorkArea => {
         const file = new File([record.fileBlob!], record.fileName, { type: record.fileType, lastModified: record.lastModified })
-        const conversation = { id: makeId(), title: '新对话', history: [] }
-        const savedConversations = record.conversations?.length ? record.conversations : [conversation]
-        return { id: makeId(), memoryKey: record.id, source: { name: file.name, kind: file.type === 'application/pdf' ? 'pdf' : 'image', url: URL.createObjectURL(file), file }, pdf: null, documentText: record.documentTextVersion === 2 ? record.documentText || '' : '', selectedText: '', selections: [], conversations: savedConversations, activeConversationId: savedConversations.some((item) => item.id === record.activeConversationId) ? record.activeConversationId : savedConversations[0].id, customPrompt: '', zoom: record.zoom || 1, currentPage: record.currentPage || 1, areaSelectionEnabled: record.areaSelectionEnabled || false, scope: record.scope || 'selection', note: record.note || '', noteAssets: record.noteAssets || {}, highlights: record.highlights || [] }
+        const savedConversations = record.conversations || []
+        const savedActiveConversationId = savedConversations.some((item) => item.id === record.activeConversationId) ? record.activeConversationId : savedConversations[0]?.id || ''
+        return { id: makeId(), memoryKey: record.id, source: { name: file.name, kind: file.type === 'application/pdf' ? 'pdf' : 'image', url: URL.createObjectURL(file), file }, pdf: null, documentText: record.documentTextVersion === 2 ? record.documentText || '' : '', selectedText: '', selections: [], conversations: savedConversations, activeConversationId: savedActiveConversationId, customPrompt: '', zoom: record.zoom || 1, currentPage: record.currentPage || 1, areaSelectionEnabled: record.areaSelectionEnabled || false, scope: record.scope || 'selection', note: record.note || '', noteAssets: record.noteAssets || {}, highlights: record.highlights || [] }
       })
       setWorkAreas(restored)
     }).catch(() => undefined)
@@ -388,10 +394,10 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
     try { remembered = await getFileMemory(memoryKey) } catch { remembered = undefined }
     forgottenFileKeysRef.current.delete(memoryKey)
     const conversation: Conversation = { id: makeId(), title: t('untitledConversation'), history: [] }
-    const restoredConversations = remembered?.conversations?.length ? remembered.conversations : [conversation]
+    const restoredConversations = remembered ? remembered.conversations || [] : [conversation]
     const restoredActiveConversationId = restoredConversations.some((item) => item.id === remembered?.activeConversationId)
       ? remembered!.activeConversationId
-      : restoredConversations[0].id
+      : restoredConversations[0]?.id || ''
     const next: WorkArea = {
       id, memoryKey, source: { name: file.name, kind: file.type === 'application/pdf' ? 'pdf' : 'image', url: URL.createObjectURL(file), file },
       pdf: null, documentText: remembered?.documentTextVersion === 2 ? remembered.documentText || '' : '', selectedText: '', selections: [], conversations: restoredConversations, activeConversationId: restoredActiveConversationId, customPrompt: '', zoom: remembered?.zoom || 1,
@@ -450,18 +456,17 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
       setWorkAreas((items) => items.map((item) => snapshot && item.id === snapshot.id ? snapshot : item).map((item) => item.id === areaId ? next : item))
       setActiveWorkAreaId(areaId); activeWorkAreaIdRef.current = areaId; loadWorkArea(next)
     }
-    setPanelLayouts((items) => ({ ...items, chat: { ...items.chat, open: true, z: Date.now() } }))
+    setPanelLayouts((items) => ({ ...items, chat: { ...items.chat, open: true, z: nextPanelZ(items) } }))
   }
 
   const deleteConversation = (id: string) => {
     const synced = syncCurrentConversation().filter((item) => item.id !== id)
     if (id !== activeConversationId) { setConversations(synced); return }
-    const next = synced.at(-1) || { id: makeId(), title: t('untitledConversation'), history: [] }
-    const nextItems = synced.length ? synced : [next]
-    setConversations(nextItems)
-    setActiveConversationId(next.id)
-    activeConversationIdRef.current = next.id
-    setHistory(next.history)
+    const next = synced.at(-1)
+    setConversations(synced)
+    setActiveConversationId(next?.id || '')
+    activeConversationIdRef.current = next?.id || ''
+    setHistory(next?.history || [])
     setError('')
   }
 
@@ -776,7 +781,17 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
       effectiveInstruction = commandMatch?.[2]?.trim() || (pack.code === 'en-US' ? 'Apply this skill to the current material.' : '请使用此 Skill 处理当前材料。')
     }
     const workspaceId = activeWorkAreaId
-    const conversationId = activeConversationId
+    let conversationId = activeConversationId
+    let previousHistory = history
+    if (!conversationId || !conversations.some((item) => item.id === conversationId)) {
+      const conversation: Conversation = { id: makeId(), title: t('untitledConversation'), history: [] }
+      conversationId = conversation.id
+      previousHistory = []
+      setConversations((items) => [...items, conversation])
+      setActiveConversationId(conversationId)
+      activeConversationIdRef.current = conversationId
+      setHistory([])
+    }
     const taskKey = `${workspaceId}:${conversationId}`
     if (aiTasks.has(taskKey)) return
     const targetIsDocument = scope === 'document' || !selectionReady
@@ -786,8 +801,7 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
     const userLabel = `${targetIsDocument ? t('documentScope') : t('selectedScope')} · ${actionLabel}`
     const targetText = targetIsDocument ? (documentText || source.name) : (selectedText || `视觉选区 · ${selections.flatMap((item) => item.images).length} 张图片`)
     const userMessage: ChatMessage = { id: makeId(), role: 'user', content: targetText, label: userLabel, sourcePage: currentPage }
-    const previousHistory = history
-    const requestHistory = [...history, userMessage]
+    const requestHistory = [...previousHistory, userMessage]
     setHistory(requestHistory)
     setConversations((items) => items.map((item) => item.id === conversationId ? {
       ...item,
@@ -861,13 +875,14 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
     setSelections((items) => { const next = [...items, { id: selectionId, image: '', images: [], page: currentPage, regions: [], text, textParts: [text], loading: false }]; selectionsRef.current = next; return next })
     setSelectedText((previous) => [previous, text].filter(Boolean).join('\n\n'))
     setScope('selection')
-    setPanelLayouts((items) => ({ ...items, chat: { ...items.chat, open: true, z: Date.now() } }))
+    setPanelLayouts((items) => ({ ...items, chat: { ...items.chat, open: true, z: nextPanelZ(items) } }))
   }
 
-  const translateTextInline = async (text: string) => {
+  const translateTextInline = async (text: string, signal: AbortSignal) => {
     const response = await fetch('/api/ai', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      signal,
       body: JSON.stringify({
         action: 'translate',
         selectedText: text,
@@ -891,12 +906,9 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
     return ''
   }, [busy, progress, selectedText, selections.length, hasVisualSelection, t])
 
-  const updatePanel = (id: PanelId, layout: PanelLayout) => setPanelLayouts((items) => {
-    const raised = layout.z > items[id].z
-    const z = raised ? Math.max(...Object.values(items).map((item) => item.z)) + 1 : Math.max(items[id].z, layout.z)
-    return { ...items, [id]: { ...layout, z } }
-  })
-  const togglePanel = (id: PanelId) => setPanelLayouts((items) => ({ ...items, [id]: { ...items[id], open: !items[id].open, z: Date.now() } }))
+  const updatePanel = (id: PanelId, layout: PanelLayout) => setPanelLayouts((items) => ({ ...items, [id]: layout }))
+  const raisePanel = (id: PanelId) => setPanelLayouts((items) => ({ ...items, [id]: { ...items[id], z: nextPanelZ(items) } }))
+  const togglePanel = (id: PanelId) => setPanelLayouts((items) => ({ ...items, [id]: { ...items[id], open: !items[id].open, z: nextPanelZ(items) } }))
   const visiblePanelIds = (Object.keys(panelLayouts) as PanelId[]).filter((id) => panelLayouts[id].open && (id === 'projects' || Boolean(source)))
   const leftPanelIds = visiblePanelIds.filter((id) => panelLayouts[id].dock === 'left')
   const rightPanelIds = visiblePanelIds.filter((id) => panelLayouts[id].dock === 'right')
@@ -920,7 +932,7 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
 
   const openProjectNotes = (areaId: string) => {
     openWorkArea(areaId)
-    setPanelLayouts((items) => ({ ...items, notes: { ...items.notes, open: true, z: Date.now() } }))
+    setPanelLayouts((items) => ({ ...items, notes: { ...items.notes, open: true, z: nextPanelZ(items) } }))
   }
   const toggleProjectConversations = (areaId: string) => {
     if (areaId !== activeWorkAreaId) openWorkArea(areaId)
@@ -933,7 +945,7 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
   }
   const openProjectConversation = (conversationId: string) => {
     openConversation(conversationId)
-    setPanelLayouts((items) => ({ ...items, chat: { ...items.chat, open: true, z: Date.now() } }))
+    setPanelLayouts((items) => ({ ...items, chat: { ...items.chat, open: true, z: nextPanelZ(items) } }))
   }
   const projectContent = <ProjectExplorer
     projects={workAreas.map((area) => ({ id: area.id, name: area.source.name, busy: Array.from(aiTasks).some((key) => key.startsWith(`${area.id}:`)) }))}
@@ -969,7 +981,7 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
     projects: { title: '项目', icon: <FolderOpen size={15} /> }, selection: { title: t('selection'), icon: <MousePointer2 size={15} /> },
     chat: { title: t('aiAssistant'), icon: <BrainCircuit size={16} />, actions: <button onClick={createConversation} title={t('newConversation')}><Plus size={14} /></button> }, notes: { title: '笔记', icon: <StickyNote size={15} /> },
   }
-  const renderPanel = (id: PanelId) => <WorkspacePanel key={id} id={id} title={panelMeta[id].title} icon={panelMeta[id].icon} actions={panelMeta[id].actions} layout={panelLayouts[id]} onChange={(layout) => updatePanel(id, layout)}>{panelContent[id]}</WorkspacePanel>
+  const renderPanel = (id: PanelId) => <WorkspacePanel key={id} id={id} title={panelMeta[id].title} icon={panelMeta[id].icon} actions={panelMeta[id].actions} layout={panelLayouts[id]} onChange={(layout) => updatePanel(id, layout)} onFocus={() => raisePanel(id)}>{panelContent[id]}</WorkspacePanel>
   const renderDockPanels = (ids: PanelId[]) => ids.map((id, index) => <Fragment key={id}>{renderPanel(id)}{index < ids.length - 1 && <div className="dock-splitter" onPointerDown={(event) => startDockSplitResize(id, ids[index + 1], event)} />}</Fragment>)
 
   return (
@@ -988,7 +1000,7 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
         {leftPanelIds.length > 0 && <div className="dock-column dock-column-left">{renderDockPanels(leftPanelIds)}<div className="panel-resizer right" onPointerDown={(event) => startResize('left', leftDockWidth, event)} /></div>}
 
         <section className="reader-pane">
-          {!source ? <div className="empty-reader"><img src="/app-icon.svg" alt="Reading Assistant" /><p>打开或新建一个项目</p></div> : <>
+          {!source ? <div className="empty-reader"><img src="/app-icon.svg" alt="Raid" /><p>打开或新建一个项目</p></div> : <>
             <div className="reader-toolbar">
               <div className="reader-status-group">
                 <div className="selection-mode-switch" role="group" aria-label="选择方式">

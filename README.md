@@ -1,4 +1,4 @@
-# Reading Assistant
+# Raid
 
 [中文](README.md) | [English](README_EN.md)
 
@@ -6,7 +6,7 @@
 ![Version](https://img.shields.io/badge/version-0.3.0-6b7cff)
 ![Platform](https://img.shields.io/badge/platform-Windows-0078d4)
 
-Reading Assistant 是一款面向论文、教材和技术文档的 PDF / 图片 AI 阅读助手。它提供连续 PDF 阅读、文字选择、跨页区域框选、OCR、全文上下文问答，以及可自行配置的 OpenAI Chat Completions 兼容模型。
+Raid 是一款面向论文、教材和技术文档的 PDF / 图片 AI 阅读助手。它提供连续 PDF 阅读、文字选择、跨页区域框选、OCR、全文上下文问答，以及可自行配置的 OpenAI Chat Completions 兼容模型。
 
 > 作者：**xyLee** · [项目仓库](https://github.com/lxymol/Reading-Assistant)
 

@@ -83,7 +83,7 @@ async function createWindow() {
     minWidth: 980,
     minHeight: 640,
     show: true,
-    title: isDevelopmentInstance ? 'Reading Assistant · Test' : 'Reading Assistant',
+    title: isDevelopmentInstance ? 'Raid · Test' : 'Raid',
     backgroundColor: '#171a20',
     autoHideMenuBar: true,
     icon: appIconPath,
@@ -97,7 +97,22 @@ async function createWindow() {
 
   mainWindow.setMenuBarVisibility(false)
   logStartup('Browser window created')
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+  mainWindow.webContents.setWindowOpenHandler(({ url, frameName }) => {
+    if (url === 'about:blank' && frameName.startsWith('reading-assistant-panel-')) {
+      return {
+        action: 'allow',
+        overrideBrowserWindowOptions: {
+          parent: mainWindow,
+          modal: false,
+          frame: false,
+          autoHideMenuBar: true,
+          minWidth: 260,
+          minHeight: 220,
+          backgroundColor: '#252526',
+          webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
+        },
+      }
+    }
     void shell.openExternal(url)
     return { action: 'deny' }
   })
@@ -111,7 +126,7 @@ async function createWindow() {
   await mainWindow.loadURL(`http://127.0.0.1:${started.port}`)
   const importBridgeReady = await mainWindow.webContents.executeJavaScript("Boolean(window.readingAssistant?.selectSkillFolder && window.readingAssistant?.selectLanguageFolder)")
   logStartup(`Folder import bridge ready: ${importBridgeReady}`)
-  console.log(`Reading Assistant folder import bridge: ${importBridgeReady ? 'ready' : 'unavailable'}`)
+  console.log(`Raid folder import bridge: ${importBridgeReady ? 'ready' : 'unavailable'}`)
   logStartup('Reader interface loaded')
 }
 

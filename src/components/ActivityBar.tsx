@@ -21,7 +21,7 @@ type Props = {
 
 export default function ActivityBar({ openPanels, hasSource, dark, labels, onOpenFile, onTogglePanel, onToggleTheme, onOpenSettings }: Props) {
   return <nav className="activity-bar">
-    <div className="activity-logo"><BookOpen size={24} /></div>
+    <div className="activity-logo"><BookOpen size={28} strokeWidth={2.3} /></div>
     <button className={openPanels.projects ? 'active' : ''} onClick={() => onTogglePanel('projects')} title="项目"><FolderOpen /></button>
     <button className={openPanels.selection ? 'active' : ''} disabled={!hasSource} onClick={() => onTogglePanel('selection')} title={labels.selection}><MousePointer2 /></button>
     <button className={openPanels.notes ? 'active' : ''} disabled={!hasSource} onClick={() => onTogglePanel('notes')} title="笔记"><StickyNote /></button>

@@ -1,4 +1,4 @@
-# Reading Assistant
+# Raid
 
 [中文](README.md) | [English](README_EN.md)
 
@@ -6,7 +6,7 @@
 ![Version](https://img.shields.io/badge/version-0.3.0-6b7cff)
 ![Platform](https://img.shields.io/badge/platform-Windows-0078d4)
 
-Reading Assistant is an AI-assisted PDF and image reader for papers, textbooks, and technical documents. It combines continuous PDF reading, text selection, cross-page area capture, OCR, document-aware conversations, and user-configured OpenAI Chat Completions-compatible models.
+Raid is an AI-assisted PDF and image reader for papers, textbooks, and technical documents. It combines continuous PDF reading, text selection, cross-page area capture, OCR, document-aware conversations, and user-configured OpenAI Chat Completions-compatible models.
 
 > Created by **xyLee** · [Repository](https://github.com/lxymol/Reading-Assistant)
 

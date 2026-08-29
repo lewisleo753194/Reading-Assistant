@@ -1,6 +1,6 @@
-# Contributing to Reading Assistant
+# Contributing to Raid
 
-感谢你参与 Reading Assistant。Issues 和 Pull Requests 均可使用中文或英文。
+感谢你参与 Raid。Issues 和 Pull Requests 均可使用中文或英文。
 
 ## 开发流程
 

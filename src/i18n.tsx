@@ -5,7 +5,7 @@ export type AppLanguage = 'zh-CN' | 'en-US' | (string & {})
 export type LanguagePack = { code: AppLanguage; label: string; aiLanguage: string; strings: Record<string, string> }
 
 const zh: LanguagePack = { code: 'zh-CN', label: '中文', aiLanguage: '简体中文', strings: {
-  home: '主页', openFile: '打开新文件', settings: '设置', light: '切换日间模式', dark: '切换夜间模式', appName: 'Reading Assistant',
+  home: '主页', openFile: '打开新文件', settings: '设置', light: '切换日间模式', dark: '切换夜间模式', appName: 'Raid',
   selection: '选区', selectedContent: '已选内容', clear: '清空', selectionEmpty: '选择文字或开启区域选择后，内容会固定显示在这里。', chooseText: '选择文字', chooseArea: '选择区域',
     conversations: '对话', newConversation: '新对话', deleteConversation: '删除对话', untitledConversation: '新对话', deleteSelection: '删除此选区图片及对应文字',
   previousPage: '上一页', nextPage: '下一页', aiAssistant: '阅读助手', selectedScope: '对选区', documentScope: '对全文', translate: '翻译', explain: '解释', insight: '洞察', summarize: '总结',
@@ -17,7 +17,7 @@ const zh: LanguagePack = { code: 'zh-CN', label: '中文', aiLanguage: '简体�
 } }
 
 const en: LanguagePack = { code: 'en-US', label: 'English', aiLanguage: 'English', strings: {
-  home: 'Home', openFile: 'Open file', settings: 'Settings', light: 'Use light mode', dark: 'Use dark mode', appName: 'Reading Assistant',
+  home: 'Home', openFile: 'Open file', settings: 'Settings', light: 'Use light mode', dark: 'Use dark mode', appName: 'Raid',
   selection: 'Selections', selectedContent: 'Selected content', clear: 'Clear', selectionEmpty: 'Selected text and regions stay here for this workspace.', chooseText: 'Select text', chooseArea: 'Select area',
     conversations: 'Conversations', newConversation: 'New conversation', deleteConversation: 'Delete conversation', untitledConversation: 'New conversation', deleteSelection: 'Delete this image and its extracted text',
   previousPage: 'Previous page', nextPage: 'Next page', aiAssistant: 'Reading assistant', selectedScope: 'Selection', documentScope: 'Document', translate: 'Translate', explain: 'Explain', insight: 'Insight', summarize: 'Summarize',

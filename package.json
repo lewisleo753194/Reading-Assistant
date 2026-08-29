@@ -30,7 +30,7 @@
   },
   "build": {
     "appId": "cn.lxymol.readingassistant",
-    "productName": "Reading Assistant",
+    "productName": "Raid",
     "asar": true,
     "electronDist": "node_modules/electron/dist",
     "directories": {
@@ -49,7 +49,7 @@
         "en-US",
         "zh-CN"
       ],
-      "artifactName": "Reading-Assistant-Setup-${version}.${ext}"
+      "artifactName": "Raid-Setup-${version}.${ext}"
     },
     "nsis": {
       "oneClick": false,

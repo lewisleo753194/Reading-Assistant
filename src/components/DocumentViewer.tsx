@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import { createPortal } from 'react-dom'
 import { TextLayer, type PDFDocumentProxy } from 'pdfjs-dist'
 import { Check, Copy, Highlighter, ImageOff, Languages, LoaderCircle, Sparkles, X } from 'lucide-react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import remarkMath from 'remark-math'
+import rehypeKatex from 'rehype-katex'
 import SelectableCanvas from './SelectableCanvas'
 import type { DocumentHighlight, SelectionResult, SourceFile } from '../types'
 import { loadPdf } from '../lib/pdf'
@@ -15,7 +20,7 @@ type Props = {
   onPdfReady: (pdf: PDFDocumentProxy) => void
   onSelect: (selection: SelectionResult) => void
   onTextAi: (text: string) => void
-  onTextTranslate: (text: string) => Promise<string>
+  onTextTranslate: (text: string, signal: AbortSignal) => Promise<string>
   highlights: DocumentHighlight[]
   onHighlight: (highlight: Omit<DocumentHighlight, 'id'>) => void
 }
@@ -95,7 +100,8 @@ export default function DocumentViewer({ source, zoom, currentPage, inverted, ar
   const [translation, setTranslation] = useState('')
   const [translating, setTranslating] = useState(false)
   const [copied, setCopied] = useState(false)
-  const dragRef = useRef<{ x: number; y: number; left: number; top: number } | null>(null)
+  const dragRef = useRef<{ pointerId: number; x: number; y: number; left: number; top: number } | null>(null)
+  const translationControllerRef = useRef<AbortController | null>(null)
   const renderRadius = zoom > 1.8 ? 1 : zoom > 1.2 ? 2 : 3
 
   useEffect(() => {
@@ -107,12 +113,17 @@ export default function DocumentViewer({ source, zoom, currentPage, inverted, ar
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
+      translationControllerRef.current?.abort()
+      translationControllerRef.current = null
       setTextAction(null)
       setTranslation('')
+      setTranslating(false)
       window.getSelection()?.removeAllRanges()
     })
     return () => cancelAnimationFrame(frame)
   }, [areaSelectionEnabled])
+
+  useEffect(() => () => translationControllerRef.current?.abort(), [])
 
   if (error) return <div className="viewer-state"><ImageOff /><p>{error}</p></div>
   if (source.kind === 'pdf' && !pdf) return <div className="viewer-state"><span className="spinner" /><p>{t('loadingPdf')}</p></div>
@@ -171,7 +182,8 @@ export default function DocumentViewer({ source, zoom, currentPage, inverted, ar
 
   const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (!areaSelectionEnabled && textAction && !(event.target as HTMLElement).closest('.text-action-popover')) {
-      setTextAction(null); setTranslation(''); window.getSelection()?.removeAllRanges()
+      translationControllerRef.current?.abort(); translationControllerRef.current = null
+      setTextAction(null); setTranslation(''); setTranslating(false); window.getSelection()?.removeAllRanges()
     }
     if (!areaSelectionEnabled || event.button !== 0 || !(event.target as HTMLElement).closest('.selectable-page')) return
     event.currentTarget.setPointerCapture(event.pointerId)
@@ -285,23 +297,76 @@ export default function DocumentViewer({ source, zoom, currentPage, inverted, ar
     }, 0)
   }
 
-  const onPointerUp = () => {
+  const onPointerUp = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if ((event.target as HTMLElement).closest('.text-action-popover')) return
     if (areaSelectionEnabled) finishSelection()
     else showTextActions()
   }
 
   const translateSelectedText = async () => {
     if (!textAction) return
+    translationControllerRef.current?.abort()
+    const controller = new AbortController()
+    translationControllerRef.current = controller
     setTranslating(true)
     setTranslation('')
     try {
-      setTranslation(await onTextTranslate(textAction.text))
+      const result = await onTextTranslate(textAction.text, controller.signal)
+      if (!controller.signal.aborted) setTranslation(result)
     } catch (reason) {
-      setTranslation(reason instanceof Error ? reason.message : t('translatingFailed'))
+      if (!controller.signal.aborted) setTranslation(reason instanceof Error ? reason.message : t('translatingFailed'))
     } finally {
-      setTranslating(false)
+      if (translationControllerRef.current === controller) {
+        translationControllerRef.current = null
+        setTranslating(false)
+      }
     }
   }
+
+  const closeTextAction = () => {
+    translationControllerRef.current?.abort()
+    translationControllerRef.current = null
+    dragRef.current = null
+    setTextAction(null)
+    setTranslation('')
+    setTranslating(false)
+    window.getSelection()?.removeAllRanges()
+  }
+
+  const textActionPopover = !areaSelectionEnabled && textAction ? <div
+    className="text-action-popover"
+    style={{ left: textAction.left, top: textAction.top }}
+    onPointerDown={(event) => {
+      event.stopPropagation()
+      if (event.button !== 0 || (event.target as HTMLElement).closest('button') || !(event.target as HTMLElement).closest('.text-action-buttons')) return
+      event.preventDefault()
+      event.currentTarget.setPointerCapture(event.pointerId)
+      dragRef.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, left: textAction.left, top: textAction.top }
+    }}
+    onPointerMove={(event) => {
+      const dragging = dragRef.current
+      if (!dragging || dragging.pointerId !== event.pointerId) return
+      event.stopPropagation()
+      setTextAction((item) => item && ({ ...item, left: dragging.left + event.clientX - dragging.x, top: dragging.top + event.clientY - dragging.y }))
+    }}
+    onPointerUp={(event) => {
+      event.stopPropagation()
+      if (dragRef.current?.pointerId === event.pointerId) dragRef.current = null
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+    }}
+    onPointerCancel={(event) => { event.stopPropagation(); dragRef.current = null }}
+  >
+    <div className="text-action-buttons">
+      <button onClick={async () => { await navigator.clipboard.writeText(textAction.text); setCopied(true) }}>{copied ? <Check size={14} /> : <Copy size={14} />}{t('copy')}</button>
+      <button onClick={translateSelectedText} disabled={translating}><Languages size={14} />{t('translate')}</button>
+      <button onClick={() => { onHighlight({ page: textAction.regions[0]?.page || currentPage, text: textAction.text, color: '#ffe066', regions: textAction.regions }); closeTextAction() }}><Highlighter size={14} />高亮</button>
+      <button onClick={() => { onTextAi(textAction.text); closeTextAction() }}><Sparkles size={14} />AI</button>
+      <button className="close-text-action" onClick={closeTextAction}><X size={14} /></button>
+    </div>
+    {(translating || translation) && <div className="inline-translation">
+      {translating ? <><LoaderCircle className="spin" size={15} /> {pack.code === 'en-US' ? 'Translating…' : '正在翻译…'}</> : <div className="inline-translation-markdown markdown"><ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>{translation}</ReactMarkdown></div>}
+    </div>}
+  </div> : null
 
   return (
     <div className={`document-stack ${areaSelectionEnabled ? 'continuous-selection' : 'text-selection-mode'}`} ref={stackRef} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={() => areaSelectionEnabled && finishSelection()}>
@@ -314,18 +379,7 @@ export default function DocumentViewer({ source, zoom, currentPage, inverted, ar
             : <div key={pageNumber} className="pdf-page-placeholder" data-page-number={pageNumber} style={{ width: 500 * zoom, height: 710 * zoom }}><span>{pageNumber}</span></div>
         })}
       {selectionRect && <div className="document-selection-rect" style={selectionRect} />}
-      {!areaSelectionEnabled && textAction && <div className="text-action-popover" style={{ left: textAction.left, top: textAction.top }} onPointerDown={(event) => { event.stopPropagation(); if ((event.target as HTMLElement).closest('.text-action-buttons')) dragRef.current = { x: event.clientX, y: event.clientY, left: textAction.left, top: textAction.top } }} onPointerMove={(event) => { if (!dragRef.current) return; event.currentTarget.setPointerCapture(event.pointerId); setTextAction((item) => item && ({ ...item, left: dragRef.current!.left + event.clientX - dragRef.current!.x, top: dragRef.current!.top + event.clientY - dragRef.current!.y })) }} onPointerUp={(event) => { dragRef.current = null; event.stopPropagation() }}>
-        <div className="text-action-buttons">
-          <button onClick={async () => { await navigator.clipboard.writeText(textAction.text); setCopied(true) }}>{copied ? <Check size={14} /> : <Copy size={14} />}{t('copy')}</button>
-          <button onClick={translateSelectedText} disabled={translating}><Languages size={14} />{t('translate')}</button>
-          <button onClick={() => { onHighlight({ page: textAction.regions[0]?.page || currentPage, text: textAction.text, color: '#ffe066', regions: textAction.regions }); setTextAction(null); window.getSelection()?.removeAllRanges() }}><Highlighter size={14} />高亮</button>
-          <button onClick={() => { onTextAi(textAction.text); setTextAction(null); window.getSelection()?.removeAllRanges() }}><Sparkles size={14} />AI</button>
-          <button className="close-text-action" onClick={() => { setTextAction(null); window.getSelection()?.removeAllRanges() }}><X size={14} /></button>
-        </div>
-        {(translating || translation) && <div className="inline-translation">
-          {translating ? <><LoaderCircle className="spin" size={15} /> {pack.code === 'en-US' ? 'Translating…' : '正在翻译…'}</> : translation}
-        </div>}
-      </div>}
+      {textActionPopover && createPortal(textActionPopover, document.body)}
     </div>
   )
 }
