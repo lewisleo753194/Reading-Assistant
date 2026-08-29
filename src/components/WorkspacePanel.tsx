@@ -19,6 +19,7 @@ export default function WorkspacePanel({ id, title, icon, layout, onChange, onFo
   const popupRef = useRef<Window | null>(null)
   const layoutRef = useRef(layout)
   const onChangeRef = useRef(onChange)
+  const dockHintRef = useRef<'left' | 'right' | null>(null)
   const moveRef = useRef<{ pointerId: number; mode: 'dock' | 'float'; startX: number; startY: number; x: number; y: number; moved: boolean } | null>(null)
   const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null)
   const [floatingDragActive, setFloatingDragActive] = useState(false)
@@ -80,13 +81,12 @@ export default function WorkspacePanel({ id, title, icon, layout, onChange, onFo
     })
     themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
     popup.addEventListener('resize', syncLayout)
-    popup.addEventListener('blur', syncLayout)
     popup.addEventListener('beforeunload', handleClose)
     return () => {
       themeObserver.disconnect()
       popup.removeEventListener('resize', syncLayout)
-      popup.removeEventListener('blur', syncLayout)
       popup.removeEventListener('beforeunload', handleClose)
+      popup.readingAssistant?.setDockZones(false, null)
       if (!popup.closed) popup.close()
       if (popupRef.current === popup) popupRef.current = null
     }
@@ -94,7 +94,7 @@ export default function WorkspacePanel({ id, title, icon, layout, onChange, onFo
   /* eslint-enable react-hooks/set-state-in-effect */
 
   const dockAtPointer = (screenX: number, screenY: number): 'left' | 'right' | null => {
-    const zoneWidth = 18
+    const zoneWidth = 32
     const left = window.screenX
     const top = window.screenY
     const right = left + window.outerWidth
@@ -108,6 +108,7 @@ export default function WorkspacePanel({ id, title, icon, layout, onChange, onFo
   const startMove = (event: ReactPointerEvent<HTMLElement>) => {
     if (event.button !== 0 || (event.target as HTMLElement).closest('button')) return
     event.preventDefault()
+    event.stopPropagation()
     event.currentTarget.setPointerCapture(event.pointerId)
     const popup = popupRef.current
     moveRef.current = {
@@ -121,26 +122,41 @@ export default function WorkspacePanel({ id, title, icon, layout, onChange, onFo
     }
     document.body.classList.add('moving-workspace-panel')
     popup?.document.body.classList.add('moving-workspace-panel')
-    if (layout.dock === 'float') setFloatingDragActive(true)
+    if (layout.dock === 'float') {
+      dockHintRef.current = null
+      setFloatingDragActive(true)
+      popup?.readingAssistant?.setDockZones(true, null)
+    }
   }
 
   const move = (event: ReactPointerEvent<HTMLElement>) => {
     const moving = moveRef.current
     if (!moving || moving.pointerId !== event.pointerId) return
+    event.preventDefault()
+    event.stopPropagation()
     if (Math.hypot(event.screenX - moving.startX, event.screenY - moving.startY) > 4) moving.moved = true
     if (moving.mode !== 'float' || !moving.moved) return
     popupRef.current?.readingAssistant?.movePanelWindow(id, moving.x + event.screenX - moving.startX, moving.y + event.screenY - moving.startY)
-    setDockHint(dockAtPointer(event.screenX, event.screenY))
+    const nextHint = dockAtPointer(event.screenX, event.screenY)
+    setDockHint(nextHint)
+    if (nextHint !== dockHintRef.current) {
+      dockHintRef.current = nextHint
+      popupRef.current?.readingAssistant?.setDockZones(true, nextHint)
+    }
   }
 
   const stopMove = (event: ReactPointerEvent<HTMLElement>, allowDock = true) => {
     const moving = moveRef.current
     if (!moving || moving.pointerId !== event.pointerId) return
+    event.preventDefault()
+    event.stopPropagation()
     moveRef.current = null
     document.body.classList.remove('moving-workspace-panel')
     popupRef.current?.document.body.classList.remove('moving-workspace-panel')
     setFloatingDragActive(false)
     setDockHint(null)
+    dockHintRef.current = null
+    popupRef.current?.readingAssistant?.setDockZones(false, null)
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
     if (moving.mode === 'float') {
       const targetDock = allowDock ? dockAtPointer(event.screenX, event.screenY) : null
@@ -150,7 +166,7 @@ export default function WorkspacePanel({ id, title, icon, layout, onChange, onFo
         const x = moving.moved ? moving.x + event.screenX - moving.startX : popup.screenX
         const y = moving.moved ? moving.y + event.screenY - moving.startY : popup.screenY
         popup.readingAssistant?.movePanelWindow(id, x, y)
-        onChange({ ...layout, x, y, width: popup.outerWidth, height: popup.outerHeight })
+        onChange({ ...layout, x, y })
       }
       return
     }
@@ -167,7 +183,7 @@ export default function WorkspacePanel({ id, title, icon, layout, onChange, onFo
   }
 
   const panel = <aside ref={frameRef} className={`workspace-panel panel-${id} dock-${layout.dock}`} onPointerDownCapture={onFocus} style={layout.dock === 'float' && portalTarget === document.body ? { left: layout.x, top: layout.y, width: layout.width, height: layout.height, zIndex: layout.z } : layout.dock !== 'float' ? { flexGrow: layout.dockSize } : undefined}>
-    <header className="workspace-panel-header" onPointerDown={startMove} onPointerMove={move} onPointerUp={(event) => stopMove(event)} onPointerCancel={(event) => stopMove(event, false)}>
+    <header className="workspace-panel-header" onDoubleClick={(event) => { event.preventDefault(); event.stopPropagation() }} onPointerDown={startMove} onPointerMove={move} onPointerUp={(event) => stopMove(event)} onPointerCancel={(event) => stopMove(event, false)}>
       <span>{icon}<strong>{title}</strong></span><div>{actions}{layout.dock === 'float' && <><button onClick={() => onChange({ ...layout, dock: 'left' })} title="停靠到左侧"><ChevronLeft size={15} /></button><button onClick={() => onChange({ ...layout, dock: 'right' })} title="停靠到右侧"><ChevronRight size={15} /></button></>}<button onClick={() => onChange({ ...layout, open: false })} title="关闭"><X size={15} /></button></div>
     </header>
     <div className="workspace-panel-content">{children}</div>

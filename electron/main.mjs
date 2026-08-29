@@ -6,8 +6,10 @@ import { startServer } from '../server/index.mjs'
 
 let localServer = null
 let mainWindow = null
+const dockZoneWindows = new Map()
 const dirname = path.dirname(fileURLToPath(import.meta.url))
 const appIconPath = path.join(dirname, process.platform === 'win32' ? 'app-icon.ico' : 'app-icon.png')
+const dockZoneWidth = 32
 const textFileExtensions = new Set(['.md', '.txt', '.json', '.yaml', '.yml', '.toml', '.csv', '.tsv', '.tex'])
 const isDevelopmentInstance = process.argv.includes('--development-instance')
 if (isDevelopmentInstance) app.setPath('userData', `${app.getPath('userData')}-development`)
@@ -70,14 +72,71 @@ async function selectImportFolder(kind) {
 
 ipcMain.handle('reading-assistant:select-skill-folder', () => selectImportFolder('skill'))
 ipcMain.handle('reading-assistant:select-language-folder', () => selectImportFolder('language'))
+const getPanelWindow = (sender) => {
+  const panelWindow = BrowserWindow.fromWebContents(sender)
+  return mainWindow && panelWindow && !panelWindow.isDestroyed() && panelWindow.getParentWindow() === mainWindow ? panelWindow : null
+}
+
+function getDockZoneWindow(side) {
+  const existing = dockZoneWindows.get(side)
+  if (existing && !existing.isDestroyed()) return existing
+  const zoneWindow = new BrowserWindow({
+    width: dockZoneWidth,
+    height: 300,
+    show: false,
+    frame: false,
+    transparent: true,
+    focusable: false,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    hasShadow: false,
+    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
+  })
+  zoneWindow.setIgnoreMouseEvents(true)
+  zoneWindow.setAlwaysOnTop(true, 'screen-saver')
+  zoneWindow.raidActive = false
+  zoneWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(`<style>html,body{width:100%;height:100%;margin:0;overflow:hidden;background:transparent}body{box-sizing:border-box;background:linear-gradient(90deg,rgba(20,24,32,.78),rgba(20,24,32,.12));box-shadow:inset 0 0 0 1px rgba(255,255,255,.13)}body.right{transform:scaleX(-1)}body.active{background:rgba(55,148,255,.72);box-shadow:inset 0 0 0 2px #3794ff,0 0 16px rgba(55,148,255,.75)}</style><body class="${side}"></body>`)}`)
+  zoneWindow.webContents.on('did-finish-load', () => {
+    void zoneWindow.webContents.executeJavaScript(`document.body.classList.toggle('active', ${zoneWindow.raidActive})`).catch(() => undefined)
+  })
+  zoneWindow.on('closed', () => dockZoneWindows.delete(side))
+  dockZoneWindows.set(side, zoneWindow)
+  return zoneWindow
+}
+
+function setDockZones(visible, active = null) {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  if (!visible) {
+    for (const zoneWindow of dockZoneWindows.values()) if (!zoneWindow.isDestroyed()) zoneWindow.hide()
+    return
+  }
+  for (const side of ['left', 'right']) {
+    const zoneWindow = getDockZoneWindow(side)
+    const bounds = mainWindow.getBounds()
+    zoneWindow.setBounds({ x: side === 'left' ? bounds.x : bounds.x + bounds.width - dockZoneWidth, y: bounds.y, width: dockZoneWidth, height: bounds.height }, false)
+    zoneWindow.raidActive = active === side
+    void zoneWindow.webContents.executeJavaScript(`document.body.classList.toggle('active', ${zoneWindow.raidActive})`).catch(() => undefined)
+    zoneWindow.showInactive()
+  }
+}
+
 ipcMain.on('reading-assistant:move-panel-window', (event, payload) => {
-  if (!mainWindow) return
   const x = Math.round(Number(payload?.x))
   const y = Math.round(Number(payload?.y))
-  const panelWindow = BrowserWindow.fromWebContents(event.sender)
-  if (!panelWindow || panelWindow.isDestroyed() || panelWindow.getParentWindow() !== mainWindow) return
+  const panelWindow = getPanelWindow(event.sender)
+  if (!panelWindow) return
   if (!Number.isFinite(x) || !Number.isFinite(y)) return
   panelWindow.setPosition(x, y, false)
+})
+ipcMain.on('reading-assistant:set-dock-zones', (event, payload) => {
+  if (!getPanelWindow(event.sender)) return
+  const active = payload?.active === 'left' || payload?.active === 'right' ? payload.active : null
+  setDockZones(Boolean(payload?.visible), active)
 })
 
 async function createWindow() {
@@ -105,6 +164,11 @@ async function createWindow() {
   })
 
   mainWindow.setMenuBarVisibility(false)
+  mainWindow.on('closed', () => {
+    for (const zoneWindow of dockZoneWindows.values()) if (!zoneWindow.isDestroyed()) zoneWindow.destroy()
+    dockZoneWindows.clear()
+    mainWindow = null
+  })
   logStartup('Browser window created')
   mainWindow.webContents.setWindowOpenHandler(({ url, frameName }) => {
     if (url === 'about:blank' && frameName.startsWith('reading-assistant-panel-')) {
@@ -167,6 +231,7 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', () => {
+  setDockZones(false)
   localServer?.close()
   localServer = null
 })

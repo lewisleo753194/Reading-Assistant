@@ -112,6 +112,7 @@ declare global {
       selectSkillFolder: () => Promise<FolderImportResult>
       selectLanguageFolder: () => Promise<FolderImportResult>
       movePanelWindow: (id: string, x: number, y: number) => void
+      setDockZones: (visible: boolean, active: 'left' | 'right' | null) => void
     }
   }
 }

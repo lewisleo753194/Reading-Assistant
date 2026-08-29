@@ -11,6 +11,7 @@ All notable changes to Raid are documented here.
 - Projects can retain an intentionally empty conversation list after their final conversation is deleted; a new conversation is created lazily only when the user asks AI another question.
 - Replaced browser drag-and-drop with grab-pointer movement and real Electron child tool windows, allowing floating modules to leave the main window and follow native click-to-front ordering.
 - Floating tool windows show narrow left/right drop shadows while being dragged and dock only when the pointer itself is released inside one of those edge zones.
+- Moved docking hints into click-through native overlay windows so floating tools cannot obscure them, and prevented panel dragging from changing the stored window size or propagating into the document viewer.
 - Normalized legacy panel layer values so in-window fallback panels also raise predictably when clicked.
 
 ### Changed
