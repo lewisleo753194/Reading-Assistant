@@ -17,6 +17,7 @@ All notable changes to Reading Assistant are documented here.
 - Removed the unused legacy drop-zone implementation, obsolete exports, translations, and unreferenced stylesheet rules.
 - Deferred OCR runtime loading until a document is opened, reducing unnecessary startup work.
 - Removed duplicate packaged copies of bundled frontend dependencies and retained only Chinese and English Chromium locale resources.
+- Moved the new-project action beneath the AI assistant in the activity bar and changed the desktop book icon to use a transparent background.
 - Completed lint, type, Electron entry-point, server entry-point, dependency-tree, and production-build validation for the stable release.
 
 ## [0.4.0] - 2026-08-29
