@@ -1,9 +1,7 @@
 import { useEffect, useRef, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { ChevronLeft, ChevronRight, X } from 'lucide-react'
-
-export type PanelDock = 'left' | 'right' | 'float'
-export type PanelLayout = { open: boolean; dock: PanelDock; x: number; y: number; width: number; height: number; dockSize: number; z: number }
+import type { PanelLayout } from '../types'
 
 type Props = {
   id: string

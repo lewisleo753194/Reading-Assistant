@@ -1,6 +1,6 @@
-import type { ChatMessage } from '../types'
+import type { Conversation } from '../types'
 
-export type StoredConversation = { id: string; title: string; history: ChatMessage[] }
+export type StoredConversation = Conversation
 
 export type FileMemoryRecord = {
   id: string
@@ -66,10 +66,6 @@ export function saveFileMemory(record: FileMemoryRecord) {
 
 export function deleteFileMemory(id: string) {
   return runRequest<undefined>('readwrite', (store) => store.delete(id))
-}
-
-export function clearFileMemories() {
-  return runRequest<undefined>('readwrite', (store) => store.clear())
 }
 
 export function listFileMemoryRecords() {

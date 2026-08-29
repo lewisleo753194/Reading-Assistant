@@ -7,11 +7,6 @@ export async function loadPdf(url: string): Promise<PDFDocumentProxy> {
   return getDocument({ url }).promise
 }
 
-export function getSampledPageNumbers(total: number, maximum: number) {
-  if (total <= maximum) return Array.from({ length: total }, (_, index) => index + 1)
-  return Array.from(new Set(Array.from({ length: maximum }, (_, index) => Math.round(index * (total - 1) / (maximum - 1)) + 1)))
-}
-
 export async function extractPdfText(pdf: PDFDocumentProxy, onProgress?: (done: number, total: number) => void, maximumCharacters = Number.POSITIVE_INFINITY) {
   const pages: string[] = []
   const pageNumbers = Array.from({ length: pdf.numPages }, (_, index) => index + 1)

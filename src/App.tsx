@@ -1,50 +1,29 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
-import { createWorker } from 'tesseract.js'
+import type { Worker as OcrWorker } from 'tesseract.js'
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown'
 import remarkMath from 'remark-math'
 import remarkGfm from 'remark-gfm'
 import rehypeKatex from 'rehype-katex'
 import 'katex/dist/katex.min.css'
 import {
-  BookOpen, BrainCircuit, ChevronLeft, ChevronRight, Copy, FileText, Languages, FolderOpen,
-  Lightbulb, LoaderCircle, MessageSquareText, Minus, Moon,
-  Plus, Puzzle, Send, Settings2, Sparkles, Sun, MousePointer2, TextCursorInput, X, StickyNote, Square,
+  BrainCircuit, ChevronLeft, ChevronRight, Copy, FileText, Languages, FolderOpen,
+  Lightbulb, LoaderCircle, MessageSquareText, Minus,
+  Plus, Puzzle, Send, Sparkles, MousePointer2, TextCursorInput, X, StickyNote, Square,
 } from 'lucide-react'
+import ActivityBar from './components/ActivityBar'
 import DocumentViewer from './components/DocumentViewer'
 import AiSettingsModal from './components/AiSettingsModal'
 import NoteEditor from './components/NoteEditor'
-import WorkspacePanel, { type PanelLayout } from './components/WorkspacePanel'
+import ProjectExplorer from './components/ProjectExplorer'
+import WorkspacePanel from './components/WorkspacePanel'
 import { extractPdfRegionText, extractPdfText } from './lib/pdf'
-import type { AiConfig, ChatMessage, DocumentHighlight, ImportedSkill, MemorySettings, SelectionResult, SourceFile } from './types'
+import type { AiAction, AiConfig, CapturedSelection, ChatMessage, Conversation, DocumentHighlight, ImportedSkill, MemorySettings, PanelId, PanelLayout, SelectionResult, SourceFile, WorkArea } from './types'
 import { getLanguagePacks, registerLanguagePack, useI18n, type AppLanguage, type LanguagePack } from './i18n'
 import { parseLanguageImport, parseSkillImport } from './lib/imports'
 import { deleteFileMemory, getFileMemory, getFileMemoryId, listFileMemories, listFileMemoryRecords, saveFileMemory, type FileMemoryRecord, type FileMemorySummary } from './lib/memory'
+import { loadAiConfig, loadDarkTheme, loadMemorySettings, loadPanelLayouts, loadSkills, loadUserMemory } from './lib/preferences'
 
-type AiAction = 'translate' | 'explain' | 'insight' | 'summarize' | 'custom'
-type CapturedSelection = SelectionResult & { id: string; text: string; textParts: string[]; loading: boolean }
-type Conversation = { id: string; title: string; history: ChatMessage[] }
-type WorkArea = {
-  id: string
-  memoryKey: string
-  source: SourceFile
-  pdf: PDFDocumentProxy | null
-  documentText: string
-  selectedText: string
-  selections: CapturedSelection[]
-  conversations: Conversation[]
-  activeConversationId: string
-  customPrompt: string
-  zoom: number
-  currentPage: number
-  areaSelectionEnabled: boolean
-  scope: 'selection' | 'document'
-  note: string
-  noteAssets: Record<string, string>
-  highlights: DocumentHighlight[]
-}
-type OcrWorker = Awaited<ReturnType<typeof createWorker>>
-type PanelId = 'projects' | 'selection' | 'chat' | 'notes'
 
 const makeId = () => crypto.randomUUID()
 const getCurrentTimestamp = () => Date.now()
@@ -66,60 +45,6 @@ const highlightRegionOverlap = (a: HighlightRegion, b: HighlightRegion) => {
   const intersection = (right - left) * (bottom - top)
   const smaller = Math.min(a.region.width * a.region.height, b.region.width * b.region.height)
   return intersection / Math.max(smaller, .000001) >= .35
-}
-const defaultAiConfig: AiConfig = {
-  apiKey: '',
-  baseUrl: '',
-  model: '',
-  visionEnabled: false,
-  visionApiKey: '',
-  visionBaseUrl: '',
-  visionModel: '',
-  reasoningEnabled: false,
-  reasoningApiKey: '',
-  reasoningBaseUrl: '',
-  reasoningModel: '',
-}
-
-const loadAiConfig = (): AiConfig => {
-  try {
-    const saved = localStorage.getItem('reading-assistant-ai-config')
-    return saved ? { ...defaultAiConfig, ...JSON.parse(saved) } : defaultAiConfig
-  } catch {
-    return defaultAiConfig
-  }
-}
-
-const loadDarkTheme = () => localStorage.getItem('reading-assistant-theme') === 'dark'
-const defaultMemorySettings: MemorySettings = { userMemoryEnabled: false }
-const loadMemorySettings = (): MemorySettings => {
-  try {
-    const saved = JSON.parse(localStorage.getItem('reading-assistant-memory-settings') || '{}')
-    return { ...defaultMemorySettings, ...saved }
-  } catch {
-    return defaultMemorySettings
-  }
-}
-const loadUserMemory = () => localStorage.getItem('reading-assistant-user-memory') || ''
-const loadSkills = (): ImportedSkill[] => {
-  try {
-    const value = JSON.parse(localStorage.getItem('reading-assistant-skills') || '[]')
-    return Array.isArray(value) ? value : []
-  } catch {
-    return []
-  }
-}
-const defaultPanels: Record<PanelId, PanelLayout> = {
-  projects: { open: true, dock: 'left', x: 90, y: 70, width: 310, height: 620, dockSize: 1, z: 40 },
-  selection: { open: false, dock: 'left', x: 130, y: 90, width: 340, height: 560, dockSize: 1, z: 41 },
-  chat: { open: false, dock: 'left', x: 720, y: 65, width: 420, height: 720, dockSize: 1, z: 42 },
-  notes: { open: false, dock: 'left', x: 640, y: 100, width: 430, height: 650, dockSize: 1, z: 43 },
-}
-const loadPanelLayouts = (): Record<PanelId, PanelLayout> => {
-  try {
-    const saved = JSON.parse(localStorage.getItem('reading-assistant-panel-layouts') || '{}')
-    return Object.fromEntries(Object.entries(defaultPanels).map(([id, layout]) => [id, { ...layout, ...(saved[id] || {}), dockSize: 1 }])) as Record<PanelId, PanelLayout>
-  } catch { return defaultPanels }
 }
 
 export default function App({ onLanguageChange }: { onLanguageChange: (language: AppLanguage) => void }) {
@@ -163,6 +88,7 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
   const [note, setNote] = useState('')
   const [noteAssets, setNoteAssets] = useState<Record<string, string>>({})
   const [highlights, setHighlights] = useState<DocumentHighlight[]>([])
+  const [collapsedProjectIds, setCollapsedProjectIds] = useState<Set<string>>(() => new Set())
   const [panelLayouts, setPanelLayouts] = useState(loadPanelLayouts)
   const abortControllersRef = useRef(new Map<string, AbortController>())
   const hasVisualSelection = aiConfig.visionEnabled && selections.some((item) => item.images.length > 0)
@@ -513,6 +439,7 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
   }
 
   const createConversationForArea = (areaId: string) => {
+    setCollapsedProjectIds((items) => { const next = new Set(items); next.delete(areaId); return next })
     if (areaId === activeWorkAreaId) createConversation()
     else {
       const target = workAreas.find((item) => item.id === areaId)
@@ -526,8 +453,7 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
     setPanelLayouts((items) => ({ ...items, chat: { ...items.chat, open: true, z: Date.now() } }))
   }
 
-  const deleteConversation = (event: ReactMouseEvent, id: string) => {
-    event.stopPropagation()
+  const deleteConversation = (id: string) => {
     const synced = syncCurrentConversation().filter((item) => item.id !== id)
     if (id !== activeConversationId) { setConversations(synced); return }
     const next = synced.at(-1) || { id: makeId(), title: t('untitledConversation'), history: [] }
@@ -603,11 +529,11 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
 
   const getWorker = useCallback(async () => {
     if (!workerPromiseRef.current) {
-      workerPromiseRef.current = createWorker(['chi_sim', 'eng'], 1, {
+      workerPromiseRef.current = import('tesseract.js').then(({ createWorker }) => createWorker(['chi_sim', 'eng'], 1, {
         logger: (message) => {
           if (showOcrProgressRef.current && message.status === 'recognizing text') setProgress(`${t('recognizing')} ${Math.round((message.progress || 0) * 100)}%`)
         },
-      }).then((worker) => {
+      })).then((worker) => {
         workerRef.current = worker
         return worker
       }).catch((reason) => {
@@ -992,12 +918,36 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
     return [...items, { ...item, id: makeId() }]
   })
 
-  const projectContent = <div className="project-explorer">
-    {workAreas.map((area) => <section className={`project-item ${area.id === activeWorkAreaId ? 'active' : ''}`} key={area.id}>
-      <button className="project-title" onClick={() => openWorkArea(area.id)}>{Array.from(aiTasks).some((key) => key.startsWith(`${area.id}:`)) ? <LoaderCircle className="spin" size={14} /> : <FileText size={14} />}<span>{area.source.name}</span><i onClick={(event) => { event.stopPropagation(); createConversationForArea(area.id) }} title="新对话"><Plus size={13} /></i><i onClick={(event) => { event.stopPropagation(); openWorkArea(area.id); setPanelLayouts((items) => ({ ...items, notes: { ...items.notes, open: true, z: Date.now() } })) }} title="打开笔记"><StickyNote size={13} /></i></button>
-      {area.id === activeWorkAreaId && <div className="project-conversations"><button onClick={createConversation}><Plus size={12} />新对话</button>{conversations.map((conversation) => <button key={conversation.id} className={conversation.id === activeConversationId ? 'active' : ''} onClick={() => { openConversation(conversation.id); setPanelLayouts((items) => ({ ...items, chat: { ...items.chat, open: true, z: Date.now() } })) }}><MessageSquareText size={12} /><span>{conversation.title}</span><i onClick={(event) => deleteConversation(event, conversation.id)}><X size={11} /></i></button>)}</div>}
-    </section>)}
-  </div>
+  const openProjectNotes = (areaId: string) => {
+    openWorkArea(areaId)
+    setPanelLayouts((items) => ({ ...items, notes: { ...items.notes, open: true, z: Date.now() } }))
+  }
+  const toggleProjectConversations = (areaId: string) => {
+    if (areaId !== activeWorkAreaId) openWorkArea(areaId)
+    setCollapsedProjectIds((items) => {
+      const next = new Set(items)
+      if (areaId === activeWorkAreaId && !next.has(areaId)) next.add(areaId)
+      else next.delete(areaId)
+      return next
+    })
+  }
+  const openProjectConversation = (conversationId: string) => {
+    openConversation(conversationId)
+    setPanelLayouts((items) => ({ ...items, chat: { ...items.chat, open: true, z: Date.now() } }))
+  }
+  const projectContent = <ProjectExplorer
+    projects={workAreas.map((area) => ({ id: area.id, name: area.source.name, busy: Array.from(aiTasks).some((key) => key.startsWith(`${area.id}:`)) }))}
+    activeProjectId={activeWorkAreaId}
+    activeConversationId={activeConversationId}
+    conversations={conversations}
+    collapsedProjectIds={collapsedProjectIds}
+    onOpenProject={openWorkArea}
+    onCreateConversation={createConversationForArea}
+    onOpenNotes={openProjectNotes}
+    onToggleProject={toggleProjectConversations}
+    onOpenConversation={openProjectConversation}
+    onDeleteConversation={deleteConversation}
+  />
 
   const selectionHasImages = selections.some((selection) => selection.images.length > 0)
   const selectionContent = <div className="selection-panel-body single" ref={selectionBodyRef}><section className="selection-content-section">
@@ -1024,17 +974,16 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
 
   return (
     <div className="app-shell modern-shell">
-      <nav className="activity-bar">
-        <div className="activity-logo"><BookOpen size={24} /></div>
-        <button className={panelLayouts.selection.open ? 'active' : ''} disabled={!source} onClick={() => togglePanel('selection')} title={t('selection')}><MousePointer2 /></button>
-        <button className={panelLayouts.projects.open ? 'active' : ''} onClick={() => togglePanel('projects')} title="项目"><FolderOpen /></button>
-        <button className={panelLayouts.chat.open ? 'active' : ''} disabled={!source} onClick={() => togglePanel('chat')} title={t('conversations')}><BrainCircuit /></button>
-        <button className={panelLayouts.notes.open ? 'active' : ''} disabled={!source} onClick={() => togglePanel('notes')} title="笔记"><StickyNote /></button>
-        <label title={t('openFile')}><Plus /><input hidden type="file" accept="application/pdf,image/*" onChange={(e) => e.target.files?.[0] && openFile(e.target.files[0])} /></label>
-        <span className="activity-spacer" />
-        <button onClick={() => setDark((value) => !value)} title={dark ? t('light') : t('dark')}>{dark ? <Sun /> : <Moon />}</button>
-        <button onClick={openSettings} title={t('settings')}><Settings2 /></button>
-      </nav>
+      <ActivityBar
+        openPanels={{ projects: panelLayouts.projects.open, selection: panelLayouts.selection.open, notes: panelLayouts.notes.open, chat: panelLayouts.chat.open }}
+        hasSource={Boolean(source)}
+        dark={dark}
+        labels={{ openFile: t('openFile'), selection: t('selection'), conversations: t('conversations'), light: t('light'), dark: t('dark'), settings: t('settings') }}
+        onOpenFile={openFile}
+        onTogglePanel={togglePanel}
+        onToggleTheme={() => setDark((value) => !value)}
+        onOpenSettings={openSettings}
+      />
       <main className="workspace" style={{ '--selection-width': `${leftPanelIds.length ? leftDockWidth : 0}px`, '--ai-width': `${rightPanelIds.length ? rightDockWidth : 0}px` } as CSSProperties}>
         {leftPanelIds.length > 0 && <div className="dock-column dock-column-left">{renderDockPanels(leftPanelIds)}<div className="panel-resizer right" onPointerDown={(event) => startResize('left', leftDockWidth, event)} /></div>}
 

@@ -4,6 +4,20 @@ All notable changes to Reading Assistant are documented here.
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-08-29
+
+### Added
+
+- Added the final book-shaped application icon across the browser shell, desktop window, Windows taskbar, and installer.
+- Added collapsible project conversations with matching expand and collapse indicators.
+
+### Improved
+
+- Split the activity bar, project explorer, preferences, and shared workspace types out of the main application component without changing the existing interface.
+- Removed the unused legacy drop-zone implementation, obsolete exports, translations, and unreferenced stylesheet rules.
+- Deferred OCR runtime loading until a document is opened, reducing unnecessary startup work.
+- Completed lint, type, Electron entry-point, server entry-point, dependency-tree, and production-build validation for the stable release.
+
 ## [0.4.0] - 2026-08-29
 
 ### Fixed

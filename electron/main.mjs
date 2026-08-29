@@ -7,9 +7,11 @@ import { startServer } from '../server/index.mjs'
 let localServer = null
 let mainWindow = null
 const dirname = path.dirname(fileURLToPath(import.meta.url))
+const appIconPath = path.join(dirname, process.platform === 'win32' ? 'app-icon.ico' : 'app-icon.png')
 const textFileExtensions = new Set(['.md', '.txt', '.json', '.yaml', '.yml', '.toml', '.csv', '.tsv', '.tex'])
 const isDevelopmentInstance = process.argv.includes('--development-instance')
 if (isDevelopmentInstance) app.setPath('userData', `${app.getPath('userData')}-development`)
+if (process.platform === 'win32') app.setAppUserModelId('cn.lxymol.readingassistant')
 const internalPort = isDevelopmentInstance ? 18788 : 18787
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
 
@@ -84,6 +86,7 @@ async function createWindow() {
     title: isDevelopmentInstance ? 'Reading Assistant · Test' : 'Reading Assistant',
     backgroundColor: '#171a20',
     autoHideMenuBar: true,
+    icon: appIconPath,
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
