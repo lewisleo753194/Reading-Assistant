@@ -66,6 +66,7 @@ export default function WorkspacePanel({ id, title, icon, layout, onChange, onFo
     popup.focus()
 
     const syncLayout = () => {
+      if (moveRef.current?.mode === 'float') return
       const latest = layoutRef.current
       const width = popup.outerWidth
       const height = popup.outerHeight
@@ -86,6 +87,7 @@ export default function WorkspacePanel({ id, title, icon, layout, onChange, onFo
       themeObserver.disconnect()
       popup.removeEventListener('resize', syncLayout)
       popup.removeEventListener('beforeunload', handleClose)
+      popup.readingAssistant?.setPanelDragging(false)
       popup.readingAssistant?.setDockZones(false, null)
       if (!popup.closed) popup.close()
       if (popupRef.current === popup) popupRef.current = null
@@ -125,6 +127,7 @@ export default function WorkspacePanel({ id, title, icon, layout, onChange, onFo
     if (layout.dock === 'float') {
       dockHintRef.current = null
       setFloatingDragActive(true)
+      popup?.readingAssistant?.setPanelDragging(true)
       popup?.readingAssistant?.setDockZones(true, null)
     }
   }
@@ -156,6 +159,7 @@ export default function WorkspacePanel({ id, title, icon, layout, onChange, onFo
     setFloatingDragActive(false)
     setDockHint(null)
     dockHintRef.current = null
+    popupRef.current?.readingAssistant?.setPanelDragging(false)
     popupRef.current?.readingAssistant?.setDockZones(false, null)
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
     if (moving.mode === 'float') {
@@ -183,7 +187,7 @@ export default function WorkspacePanel({ id, title, icon, layout, onChange, onFo
   }
 
   const panel = <aside ref={frameRef} className={`workspace-panel panel-${id} dock-${layout.dock}`} onPointerDownCapture={onFocus} style={layout.dock === 'float' && portalTarget === document.body ? { left: layout.x, top: layout.y, width: layout.width, height: layout.height, zIndex: layout.z } : layout.dock !== 'float' ? { flexGrow: layout.dockSize } : undefined}>
-    <header className="workspace-panel-header" onDoubleClick={(event) => { event.preventDefault(); event.stopPropagation() }} onPointerDown={startMove} onPointerMove={move} onPointerUp={(event) => stopMove(event)} onPointerCancel={(event) => stopMove(event, false)}>
+    <header className="workspace-panel-header" onPointerEnter={() => popupRef.current?.readingAssistant?.preparePanelDrag()} onDoubleClick={(event) => { event.preventDefault(); event.stopPropagation() }} onPointerDown={startMove} onPointerMove={move} onPointerUp={(event) => stopMove(event)} onPointerCancel={(event) => stopMove(event, false)}>
       <span>{icon}<strong>{title}</strong></span><div>{actions}{layout.dock === 'float' && <><button onClick={() => onChange({ ...layout, dock: 'left' })} title="停靠到左侧"><ChevronLeft size={15} /></button><button onClick={() => onChange({ ...layout, dock: 'right' })} title="停靠到右侧"><ChevronRight size={15} /></button></>}<button onClick={() => onChange({ ...layout, open: false })} title="关闭"><X size={15} /></button></div>
     </header>
     <div className="workspace-panel-content">{children}</div>

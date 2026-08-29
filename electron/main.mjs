@@ -7,6 +7,8 @@ import { startServer } from '../server/index.mjs'
 let localServer = null
 let mainWindow = null
 const dockZoneWindows = new Map()
+const panelDragBounds = new WeakMap()
+const panelPreparedBounds = new WeakMap()
 const dirname = path.dirname(fileURLToPath(import.meta.url))
 const appIconPath = path.join(dirname, process.platform === 'win32' ? 'app-icon.ico' : 'app-icon.png')
 const dockZoneWidth = 32
@@ -125,13 +127,53 @@ function setDockZones(visible, active = null) {
   }
 }
 
+function setPanelPositionPreservingSize(panelWindow, x, y, lockedBounds) {
+  let width = lockedBounds.width
+  let height = lockedBounds.height
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    panelWindow.setBounds({ x, y, width, height }, false)
+    const actual = panelWindow.getBounds()
+    const widthError = lockedBounds.width - actual.width
+    const heightError = lockedBounds.height - actual.height
+    if (widthError === 0 && heightError === 0) break
+    width += widthError
+    height += heightError
+  }
+}
+
 ipcMain.on('reading-assistant:move-panel-window', (event, payload) => {
   const x = Math.round(Number(payload?.x))
   const y = Math.round(Number(payload?.y))
   const panelWindow = getPanelWindow(event.sender)
   if (!panelWindow) return
   if (!Number.isFinite(x) || !Number.isFinite(y)) return
-  panelWindow.setPosition(x, y, false)
+  const lockedBounds = panelDragBounds.get(panelWindow)
+  if (lockedBounds) setPanelPositionPreservingSize(panelWindow, x, y, lockedBounds)
+  else panelWindow.setPosition(x, y, false)
+})
+ipcMain.on('reading-assistant:prepare-panel-drag', (event) => {
+  const panelWindow = getPanelWindow(event.sender)
+  if (!panelWindow || panelDragBounds.has(panelWindow)) return
+  const { width, height } = panelWindow.getBounds()
+  panelPreparedBounds.set(panelWindow, { width, height })
+})
+ipcMain.on('reading-assistant:set-panel-dragging', (event, payload) => {
+  const panelWindow = getPanelWindow(event.sender)
+  if (!panelWindow) return
+  if (payload?.active) {
+    const currentBounds = panelWindow.getBounds()
+    const lockedBounds = panelPreparedBounds.get(panelWindow) ?? { width: currentBounds.width, height: currentBounds.height }
+    panelDragBounds.set(panelWindow, lockedBounds)
+    setPanelPositionPreservingSize(panelWindow, currentBounds.x, currentBounds.y, lockedBounds)
+    return
+  }
+  const lockedBounds = panelDragBounds.get(panelWindow)
+  if (lockedBounds) {
+    const { x, y } = panelWindow.getBounds()
+    setPanelPositionPreservingSize(panelWindow, x, y, lockedBounds)
+  }
+  panelDragBounds.delete(panelWindow)
+  if (lockedBounds) panelPreparedBounds.set(panelWindow, lockedBounds)
 })
 ipcMain.on('reading-assistant:set-dock-zones', (event, payload) => {
   if (!getPanelWindow(event.sender)) return

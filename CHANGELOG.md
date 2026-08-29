@@ -12,6 +12,7 @@ All notable changes to Raid are documented here.
 - Replaced browser drag-and-drop with grab-pointer movement and real Electron child tool windows, allowing floating modules to leave the main window and follow native click-to-front ordering.
 - Floating tool windows show narrow left/right drop shadows while being dragged and dock only when the pointer itself is released inside one of those edge zones.
 - Moved docking hints into click-through native overlay windows so floating tools cannot obscure them, and prevented panel dragging from changing the stored window size or propagating into the document viewer.
+- Fixed Windows DPI rounding that could enlarge a floating tool on every move by preserving its exact pre-drag native dimensions throughout the drag session.
 - Normalized legacy panel layer values so in-window fallback panels also raise predictably when clicked.
 
 ### Changed
