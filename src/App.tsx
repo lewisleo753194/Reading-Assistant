@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode, type WheelEvent as ReactWheelEvent } from 'react'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
 import type { Worker as OcrWorker } from 'tesseract.js'
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown'
@@ -8,8 +8,8 @@ import rehypeKatex from 'rehype-katex'
 import 'katex/dist/katex.min.css'
 import {
   BrainCircuit, ChevronLeft, ChevronRight, Copy, FileText, Languages, FolderOpen,
-  Lightbulb, LoaderCircle, MessageSquareText, Minus,
-  Plus, Puzzle, Send, Sparkles, MousePointer2, TextCursorInput, X, StickyNote, Square,
+  Eraser, Lightbulb, LoaderCircle, MessageSquareText, Minus, Palette, PenLine,
+  Plus, Puzzle, Send, Sparkles, MousePointer2, TextCursorInput, Type, X, StickyNote, Square,
 } from 'lucide-react'
 import ActivityBar from './components/ActivityBar'
 import DocumentViewer from './components/DocumentViewer'
@@ -18,7 +18,7 @@ import NoteEditor from './components/NoteEditor'
 import ProjectExplorer from './components/ProjectExplorer'
 import WorkspacePanel from './components/WorkspacePanel'
 import { extractPdfRegionText, extractPdfText } from './lib/pdf'
-import type { AiAction, AiConfig, CapturedSelection, ChatMessage, Conversation, DocumentHighlight, ImportedSkill, MemorySettings, PanelId, PanelLayout, SelectionResult, SourceFile, WorkArea } from './types'
+import type { AiAction, AiConfig, AnnotationTool, CapturedSelection, ChatMessage, Conversation, DocumentAnnotation, DocumentHighlight, ImportedSkill, MemorySettings, PanelId, PanelLayout, SelectionResult, SourceFile, TextAnnotation, WorkArea } from './types'
 import { getLanguagePacks, registerLanguagePack, useI18n, type AppLanguage, type LanguagePack } from './i18n'
 import { parseLanguageImport, parseSkillImport } from './lib/imports'
 import { deleteFileMemory, getFileMemory, getFileMemoryId, listFileMemories, listFileMemoryRecords, saveFileMemory, type FileMemoryRecord, type FileMemorySummary } from './lib/memory'
@@ -94,6 +94,10 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
   const [note, setNote] = useState('')
   const [noteAssets, setNoteAssets] = useState<Record<string, string>>({})
   const [highlights, setHighlights] = useState<DocumentHighlight[]>([])
+  const [annotations, setAnnotations] = useState<DocumentAnnotation[]>([])
+  const [annotationMode, setAnnotationMode] = useState(false)
+  const [annotationTool, setAnnotationTool] = useState<AnnotationTool>('ink')
+  const [annotationColor, setAnnotationColor] = useState('#2f6fed')
   const [collapsedProjectIds, setCollapsedProjectIds] = useState<Set<string>>(() => new Set())
   const [panelLayouts, setPanelLayouts] = useState(() => normalizePanelZ(loadPanelLayouts()))
   const abortControllersRef = useRef(new Map<string, AbortController>())
@@ -293,11 +297,12 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
         note,
         noteAssets,
         highlights,
+        annotations,
       }
       void saveFileMemory(record).catch(() => undefined)
     }, 700)
     return () => window.clearTimeout(timer)
-  }, [source, conversations, activeConversationId, history, currentPage, zoom, areaSelectionEnabled, scope, documentText, note, noteAssets, highlights])
+  }, [source, conversations, activeConversationId, history, currentPage, zoom, areaSelectionEnabled, scope, documentText, note, noteAssets, highlights, annotations])
 
   useEffect(() => {
     const inactiveAreas = workAreas.filter((area) => area.id !== activeWorkAreaId && !forgottenFileKeysRef.current.has(area.memoryKey))
@@ -324,6 +329,7 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
           note: area.note,
           noteAssets: area.noteAssets,
           highlights: area.highlights,
+          annotations: area.annotations,
         }
         void saveFileMemory(record).catch(() => undefined)
       })
@@ -343,7 +349,7 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
         const file = new File([record.fileBlob!], record.fileName, { type: record.fileType, lastModified: record.lastModified })
         const savedConversations = record.conversations || []
         const savedActiveConversationId = savedConversations.some((item) => item.id === record.activeConversationId) ? record.activeConversationId : savedConversations[0]?.id || ''
-        return { id: makeId(), memoryKey: record.id, source: { name: file.name, kind: file.type === 'application/pdf' ? 'pdf' : 'image', url: URL.createObjectURL(file), file }, pdf: null, documentText: record.documentTextVersion === 2 ? record.documentText || '' : '', selectedText: '', selections: [], conversations: savedConversations, activeConversationId: savedActiveConversationId, customPrompt: '', zoom: record.zoom || 1, currentPage: record.currentPage || 1, areaSelectionEnabled: record.areaSelectionEnabled || false, scope: record.scope || 'selection', note: record.note || '', noteAssets: record.noteAssets || {}, highlights: record.highlights || [] }
+        return { id: makeId(), memoryKey: record.id, source: { name: file.name, kind: file.type === 'application/pdf' ? 'pdf' : 'image', url: URL.createObjectURL(file), file }, pdf: null, documentText: record.documentTextVersion === 2 ? record.documentText || '' : '', selectedText: '', selections: [], conversations: savedConversations, activeConversationId: savedActiveConversationId, customPrompt: '', zoom: record.zoom || 1, currentPage: record.currentPage || 1, areaSelectionEnabled: record.areaSelectionEnabled || false, scope: record.scope || 'selection', note: record.note || '', noteAssets: record.noteAssets || {}, highlights: record.highlights || [], annotations: record.annotations || [] }
       })
       setWorkAreas(restored)
     }).catch(() => undefined)
@@ -361,7 +367,7 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
     id: activeWorkAreaId, memoryKey: getFileMemoryId(source.file), source, pdf, documentText, selectedText, selections,
     conversations: conversations.map((item) => item.id === activeConversationId ? { ...item, history } : item),
     activeConversationId, customPrompt,
-    zoom, currentPage, areaSelectionEnabled, scope, note, noteAssets, highlights,
+    zoom, currentPage, areaSelectionEnabled, scope, note, noteAssets, highlights, annotations,
   } : null
 
   const loadWorkArea = (area: WorkArea) => {
@@ -371,7 +377,7 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
     setHistory(area.conversations.find((item) => item.id === area.activeConversationId)?.history || [])
     setCustomPrompt(area.customPrompt); setZoom(area.zoom)
     setCurrentPage(area.currentPage); setAreaSelectionEnabled(area.areaSelectionEnabled); setScope(area.scope); setError('')
-    setNote(area.note || ''); setNoteAssets(area.noteAssets || {}); setHighlights(area.highlights || [])
+    setNote(area.note || ''); setNoteAssets(area.noteAssets || {}); setHighlights(area.highlights || []); setAnnotations(area.annotations || []); setAnnotationMode(false)
     activeWorkAreaIdRef.current = area.id
     activeConversationIdRef.current = area.activeConversationId
     pendingPageRestoreRef.current = area.currentPage
@@ -401,7 +407,7 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
     const next: WorkArea = {
       id, memoryKey, source: { name: file.name, kind: file.type === 'application/pdf' ? 'pdf' : 'image', url: URL.createObjectURL(file), file },
       pdf: null, documentText: remembered?.documentTextVersion === 2 ? remembered.documentText || '' : '', selectedText: '', selections: [], conversations: restoredConversations, activeConversationId: restoredActiveConversationId, customPrompt: '', zoom: remembered?.zoom || 1,
-      currentPage: remembered?.currentPage || 1, areaSelectionEnabled: remembered?.areaSelectionEnabled || false, scope: remembered?.scope || 'selection', note: remembered?.note || '', noteAssets: remembered?.noteAssets || {}, highlights: remembered?.highlights || [],
+      currentPage: remembered?.currentPage || 1, areaSelectionEnabled: remembered?.areaSelectionEnabled || false, scope: remembered?.scope || 'selection', note: remembered?.note || '', noteAssets: remembered?.noteAssets || {}, highlights: remembered?.highlights || [], annotations: remembered?.annotations || [],
     }
     setWorkAreas((items) => [...items.map((item) => snapshot && item.id === snapshot.id ? snapshot : item), next])
     setActiveWorkAreaId(id)
@@ -532,6 +538,26 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
     })
   }
 
+  const onReaderWheel = (event: ReactWheelEvent<HTMLDivElement>) => {
+    if (source?.kind !== 'pdf' || (!event.ctrlKey && !event.metaKey)) return
+    event.preventDefault()
+    const container = readerScrollRef.current
+    const bounds = container?.getBoundingClientRect()
+    const previousZoom = zoom
+    const nextZoom = Math.max(.25, Math.min(5, previousZoom * Math.exp(-event.deltaY * .0025)))
+    if (!container || !bounds || Math.abs(nextZoom - previousZoom) < .001) return
+    const anchorX = event.clientX - bounds.left
+    const anchorY = event.clientY - bounds.top
+    const contentX = container.scrollLeft + anchorX
+    const contentY = container.scrollTop + anchorY
+    setZoom(nextZoom)
+    requestAnimationFrame(() => {
+      const ratio = nextZoom / previousZoom
+      container.scrollLeft = contentX * ratio - anchorX
+      container.scrollTop = contentY * ratio - anchorY
+    })
+  }
+
   const getWorker = useCallback(async () => {
     if (!workerPromiseRef.current) {
       workerPromiseRef.current = import('tesseract.js').then(({ createWorker }) => createWorker(['chi_sim', 'eng'], 1, {
@@ -584,7 +610,8 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
           part = await extractPdfRegionText(pdf, selectedRegion.page, selectedRegion.region)
         }
         if (!part && !aiConfig.visionEnabled) part = await recognize(result.images[index])
-        textParts[index] = part
+        const annotationText = result.annotationTexts?.[index]?.trim() || ''
+        textParts[index] = [part, annotationText && `批注：${annotationText}`].filter(Boolean).join('\n')
       }
       const current = selectionsRef.current.find((item) => item.id === selectionId)
       if (!current) return
@@ -737,7 +764,7 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
     if (target?.id === activeWorkAreaId) {
       const next = remaining.at(-1)
       if (next) { setActiveWorkAreaId(next.id); loadWorkArea(next) }
-      else { setActiveWorkAreaId(null); activeWorkAreaIdRef.current = null; setSource(null) }
+      else { setActiveWorkAreaId(null); activeWorkAreaIdRef.current = null; setSource(null); setAnnotations([]); setAnnotationMode(false) }
     }
     setProjectMemories(await listFileMemories())
   }
@@ -814,6 +841,7 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
     setCustomPrompt('')
     try {
       const context = await buildDocumentContext(workspaceId)
+      const annotationContext = annotations.filter((annotation): annotation is TextAnnotation => annotation.type === 'text' && Boolean(annotation.text.trim())).map((annotation) => `[第 ${annotation.page} 页批注]\n${annotation.text.trim()}`).join('\n\n')
       const response = await fetch('/api/ai', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -821,7 +849,7 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
         body: JSON.stringify({
           action,
           selectedText: targetIsDocument ? '' : selectedText,
-          documentText: context,
+          documentText: [context, annotationContext].filter(Boolean).join('\n\n'),
           instruction: effectiveInstruction,
           includeContext: true,
           contextMode: targetIsDocument ? 'document' : 'selection',
@@ -909,6 +937,15 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
   const updatePanel = (id: PanelId, layout: PanelLayout) => setPanelLayouts((items) => ({ ...items, [id]: layout }))
   const raisePanel = (id: PanelId) => setPanelLayouts((items) => ({ ...items, [id]: { ...items[id], z: nextPanelZ(items) } }))
   const togglePanel = (id: PanelId) => setPanelLayouts((items) => ({ ...items, [id]: { ...items[id], open: !items[id].open, z: nextPanelZ(items) } }))
+  const toggleAnnotationMode = () => {
+    setAnnotationMode((active) => {
+      if (!active) {
+        setAreaSelectionEnabled(false)
+        window.getSelection()?.removeAllRanges()
+      }
+      return !active
+    })
+  }
   const visiblePanelIds = (Object.keys(panelLayouts) as PanelId[]).filter((id) => panelLayouts[id].open && (id === 'projects' || Boolean(source)))
   const leftPanelIds = visiblePanelIds.filter((id) => panelLayouts[id].dock === 'left')
   const rightPanelIds = visiblePanelIds.filter((id) => panelLayouts[id].dock === 'right')
@@ -990,9 +1027,11 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
         openPanels={{ projects: panelLayouts.projects.open, selection: panelLayouts.selection.open, notes: panelLayouts.notes.open, chat: panelLayouts.chat.open }}
         hasSource={Boolean(source)}
         dark={dark}
+        annotationActive={annotationMode}
         labels={{ openFile: t('openFile'), selection: t('selection'), conversations: t('conversations'), light: t('light'), dark: t('dark'), settings: t('settings') }}
         onOpenFile={openFile}
         onTogglePanel={togglePanel}
+        onToggleAnnotation={toggleAnnotationMode}
         onToggleTheme={() => setDark((value) => !value)}
         onOpenSettings={openSettings}
       />
@@ -1003,10 +1042,15 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
           {!source ? <div className="empty-reader"><img src="/app-icon.svg" alt="Raid" /><p>打开或新建一个项目</p></div> : <>
             <div className="reader-toolbar">
               <div className="reader-status-group">
-                <div className="selection-mode-switch" role="group" aria-label="选择方式">
+                {annotationMode ? <div className="annotation-tools" role="toolbar" aria-label="批注工具">
+                  <label className="annotation-color" title="批注颜色"><Palette size={13} /><input type="color" value={annotationColor} onChange={(event) => setAnnotationColor(event.target.value)} /></label>
+                  <button className={annotationTool === 'text' ? 'active' : ''} onClick={() => setAnnotationTool('text')} title="文本批注"><Type size={14} /><span>文本</span></button>
+                  <button className={annotationTool === 'ink' ? 'active' : ''} onClick={() => setAnnotationTool('ink')} title="墨迹"><PenLine size={14} /><span>墨迹</span></button>
+                  <button className={annotationTool === 'eraser' ? 'active' : ''} onClick={() => setAnnotationTool('eraser')} title="擦除整条笔画"><Eraser size={14} /><span>橡皮</span></button>
+                </div> : <div className="selection-mode-switch" role="group" aria-label="选择方式">
                   <button className={!areaSelectionEnabled ? 'active' : ''} onClick={() => setAreaSelectionEnabled(false)}><TextCursorInput size={14} /><span>{t('chooseText')}</span></button>
                   <button className={areaSelectionEnabled ? 'active' : ''} onClick={() => setAreaSelectionEnabled(true)}><MousePointer2 size={14} /><span>{t('chooseArea')}</span></button>
-                </div>
+                </div>}
                 {statusText && <div className="status"><span className={busy ? 'status-dot active' : 'status-dot'} /> {statusText}</div>}
               </div>
               {source.kind === 'pdf' && <div className="page-control">
@@ -1018,7 +1062,7 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
                 <div className="zoom-control"><button onClick={() => setZoom((z) => Math.max(0.25, z - 0.1))}><Minus size={15} /></button><input aria-label="缩放倍率" type="number" min="25" max="500" value={Math.round(zoom * 100)} onChange={(e) => setZoom(Math.max(.25, Math.min(5, Number(e.target.value) / 100)))} /><span>%</span><button onClick={() => setZoom((z) => Math.min(5, z + 0.1))}><Plus size={15} /></button></div>
               </div>
             </div>
-            <div className="reader-scroll" ref={readerScrollRef} onScroll={onReaderScroll}><DocumentViewer key={source.url} source={source} zoom={zoom} currentPage={currentPage} inverted={dark} areaSelectionEnabled={areaSelectionEnabled} onPdfReady={onPdfReady} onSelect={onSelect} onTextAi={addTextToAi} onTextTranslate={translateTextInline} highlights={highlights} onHighlight={toggleHighlight} /></div>
+            <div className="reader-scroll" ref={readerScrollRef} onScroll={onReaderScroll} onWheel={onReaderWheel}><DocumentViewer key={source.url} source={source} zoom={zoom} currentPage={currentPage} inverted={dark} areaSelectionEnabled={areaSelectionEnabled} onPdfReady={onPdfReady} onSelect={onSelect} onTextAi={addTextToAi} onTextTranslate={translateTextInline} highlights={highlights} onHighlight={toggleHighlight} annotationMode={annotationMode} annotationTool={annotationTool} annotationColor={annotationColor} annotations={annotations} onAnnotationsChange={setAnnotations} /></div>
           </>}</section>
         {rightPanelIds.length > 0 && <div className="dock-column dock-column-right"><div className="panel-resizer left" onPointerDown={(event) => startResize('right', rightDockWidth, event)} />{renderDockPanels(rightPanelIds)}</div>}
         {floatingPanelIds.map(renderPanel)}

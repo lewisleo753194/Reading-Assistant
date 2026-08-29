@@ -22,8 +22,6 @@ export default function WorkspacePanel({ id, title, icon, layout, onChange, onFo
   const dockHintRef = useRef<'left' | 'right' | null>(null)
   const moveRef = useRef<{ pointerId: number; mode: 'dock' | 'float'; startX: number; startY: number; x: number; y: number; moved: boolean } | null>(null)
   const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null)
-  const [floatingDragActive, setFloatingDragActive] = useState(false)
-  const [dockHint, setDockHint] = useState<'left' | 'right' | null>(null)
 
   /* The portal target is created by an external browser window, so it must be
      synchronized back into React after that window exists. */
@@ -126,9 +124,8 @@ export default function WorkspacePanel({ id, title, icon, layout, onChange, onFo
     popup?.document.body.classList.add('moving-workspace-panel')
     if (layout.dock === 'float') {
       dockHintRef.current = null
-      setFloatingDragActive(true)
       popup?.readingAssistant?.setPanelDragging(true)
-      popup?.readingAssistant?.setDockZones(true, null)
+      popup?.readingAssistant?.setDockZones(true, null, popup.document.documentElement.dataset.theme === 'dark')
     }
   }
 
@@ -141,10 +138,10 @@ export default function WorkspacePanel({ id, title, icon, layout, onChange, onFo
     if (moving.mode !== 'float' || !moving.moved) return
     popupRef.current?.readingAssistant?.movePanelWindow(id, moving.x + event.screenX - moving.startX, moving.y + event.screenY - moving.startY)
     const nextHint = dockAtPointer(event.screenX, event.screenY)
-    setDockHint(nextHint)
     if (nextHint !== dockHintRef.current) {
       dockHintRef.current = nextHint
-      popupRef.current?.readingAssistant?.setDockZones(true, nextHint)
+      const panelWindow = popupRef.current
+      panelWindow?.readingAssistant?.setDockZones(true, nextHint, panelWindow.document.documentElement.dataset.theme === 'dark')
     }
   }
 
@@ -156,8 +153,6 @@ export default function WorkspacePanel({ id, title, icon, layout, onChange, onFo
     moveRef.current = null
     document.body.classList.remove('moving-workspace-panel')
     popupRef.current?.document.body.classList.remove('moving-workspace-panel')
-    setFloatingDragActive(false)
-    setDockHint(null)
     dockHintRef.current = null
     popupRef.current?.readingAssistant?.setPanelDragging(false)
     popupRef.current?.readingAssistant?.setDockZones(false, null)
@@ -193,5 +188,5 @@ export default function WorkspacePanel({ id, title, icon, layout, onChange, onFo
     <div className="workspace-panel-content">{children}</div>
   </aside>
   const renderedPanel = layout.dock === 'float' && portalTarget ? createPortal(panel, portalTarget) : layout.dock === 'float' ? null : panel
-  return <>{renderedPanel}{floatingDragActive && createPortal(<div className="dock-drop-zones" aria-hidden="true"><i className={dockHint === 'left' ? 'active' : ''} /><i className={dockHint === 'right' ? 'active' : ''} /></div>, document.body)}</>
+  return renderedPanel
 }

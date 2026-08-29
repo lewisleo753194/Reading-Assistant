@@ -149,12 +149,11 @@ app.get('/api/health', (_req, res) => {
   res.json({ ok: true, configured: Boolean(process.env.OPENAI_API_KEY), model: process.env.AI_MODEL || '' })
 })
 
-function resolveAiConfig(body, mode = 'default') {
+function resolveAiEndpoint(body, mode = 'default') {
   const clientConfig = body?.aiConfig || {}
   const prefix = mode === 'vision' ? 'vision' : mode === 'reasoning' ? 'reasoning' : ''
   const apiKey = String((prefix && clientConfig[`${prefix}ApiKey`]) || clientConfig.apiKey || process.env.OPENAI_API_KEY || '').trim()
   const baseUrl = String((prefix && clientConfig[`${prefix}BaseUrl`]) || clientConfig.baseUrl || process.env.AI_BASE_URL || '').trim().replace(/\/$/, '')
-  const model = String((prefix && clientConfig[`${prefix}Model`]) || clientConfig.model || process.env.AI_MODEL || '').trim()
   let parsedUrl
   try {
     parsedUrl = new URL(baseUrl)
@@ -163,9 +162,32 @@ function resolveAiConfig(body, mode = 'default') {
   }
   if (!['http:', 'https:'].includes(parsedUrl.protocol)) throw new Error('AI 接口地址必须使用 http 或 https')
   if (!apiKey) throw new Error('请先在页面右上角的 AI 设置中填写 API Key')
+  return { apiKey, baseUrl }
+}
+
+function resolveAiConfig(body, mode = 'default') {
+  const clientConfig = body?.aiConfig || {}
+  const prefix = mode === 'vision' ? 'vision' : mode === 'reasoning' ? 'reasoning' : ''
+  const model = String((prefix && clientConfig[`${prefix}Model`]) || clientConfig.model || process.env.AI_MODEL || '').trim()
+  const { apiKey, baseUrl } = resolveAiEndpoint(body, mode)
   if (!model) throw new Error('请填写模型名称')
   return { apiKey, baseUrl, model }
 }
+
+app.post('/api/ai/models', async (req, res) => {
+  try {
+    const mode = ['default', 'vision', 'reasoning'].includes(req.body?.mode) ? req.body.mode : 'default'
+    const { apiKey, baseUrl } = resolveAiEndpoint(req.body, mode)
+    const response = await fetch(`${baseUrl}/models`, { headers: { Authorization: `Bearer ${apiKey}` }, signal: AbortSignal.timeout(15000) })
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok) throw new Error(data?.error?.message || `获取模型列表失败（${response.status}）`)
+    const models = [...new Set((Array.isArray(data?.data) ? data.data : []).map((entry) => String(entry?.id || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b))
+    if (!models.length) throw new Error('接口没有返回可用模型。')
+    res.json({ models })
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : '获取模型列表失败' })
+  }
+})
 
 app.post('/api/ai/test', async (req, res) => {
   try {

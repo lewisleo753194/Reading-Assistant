@@ -1,4 +1,4 @@
-import { Bot, BrainCircuit, CheckCircle2, Database, Eye, EyeOff, FolderOpen, Languages, LoaderCircle, Puzzle, Settings2, Trash2, X } from 'lucide-react'
+import { Bot, BrainCircuit, CheckCircle2, CircleHelp, Database, Eye, EyeOff, FolderOpen, Languages, LoaderCircle, Puzzle, Settings2, Trash2, X } from 'lucide-react'
 import { useState } from 'react'
 import type { LanguagePack } from '../i18n'
 import { useI18n, type AppLanguage } from '../i18n'
@@ -36,7 +36,33 @@ export default function AiSettingsModal({ value, serverConfigured, skills, langu
   const [showReasoningKey, setShowReasoningKey] = useState(false)
   const [testing, setTesting] = useState(false)
   const [importing, setImporting] = useState(false)
+  const [loadingModels, setLoadingModels] = useState<'default' | 'vision' | 'reasoning' | null>(null)
+  const [modelMenu, setModelMenu] = useState<'default' | 'vision' | 'reasoning' | null>(null)
+  const [availableModels, setAvailableModels] = useState<Record<'default' | 'vision' | 'reasoning', string[]>>({ default: [], vision: [], reasoning: [] })
   const [message, setMessage] = useState<{ type: 'ok' | 'error'; text: string } | null>(null)
+
+  const fetchModels = async (mode: 'default' | 'vision' | 'reasoning') => {
+    if (modelMenu === mode && availableModels[mode].length) return setModelMenu(null)
+    setLoadingModels(mode)
+    setMessage(null)
+    try {
+      const response = await fetch('/api/ai/models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ aiConfig: draft, mode }) })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || (pack.code === 'en-US' ? 'Could not load models.' : '无法获取模型列表。'))
+      setAvailableModels((items) => ({ ...items, [mode]: data.models }))
+      setModelMenu(mode)
+    } catch (reason) {
+      setMessage({ type: 'error', text: reason instanceof Error ? reason.message : t('connectionFailed') })
+    } finally {
+      setLoadingModels(null)
+    }
+  }
+
+  const modelPicker = (mode: 'default' | 'vision' | 'reasoning', field: 'model' | 'visionModel' | 'reasoningModel', placeholder: string) => <div className="model-picker">
+    <input className="settings-input" value={draft[field]} onChange={(event) => setDraft({ ...draft, [field]: event.target.value })} placeholder={placeholder} />
+    <button type="button" className="model-help" onClick={() => void fetchModels(mode)} title={pack.code === 'en-US' ? 'Show available models' : '获取并显示可用模型'}>{loadingModels === mode ? <LoaderCircle className="spin" size={15} /> : <CircleHelp size={15} />}</button>
+    {modelMenu === mode && <div className="model-options">{availableModels[mode].map((model) => <button type="button" key={model} className={draft[field] === model ? 'active' : ''} onClick={() => { setDraft({ ...draft, [field]: model }); setModelMenu(null) }}>{model}</button>)}</div>}
+  </div>
 
   const testConnection = async () => {
     setTesting(true)
@@ -94,18 +120,18 @@ export default function AiSettingsModal({ value, serverConfigured, skills, langu
         {tab === 'models' && <>
           <div className="model-section-title">{t('defaultModel')}</div>
           <label className="field-label">{t('apiUrl')}</label><input className="settings-input" value={draft.baseUrl} onChange={(event) => setDraft({ ...draft, baseUrl: event.target.value })} placeholder="https://your-provider.example/v1" autoComplete="url" />
-          <label className="field-label">{t('model')}</label><input className="settings-input" value={draft.model} onChange={(event) => setDraft({ ...draft, model: event.target.value })} placeholder="model-name" />
+          <label className="field-label">{t('model')}</label>{modelPicker('default', 'model', 'model-name')}
           <label className="field-label">{t('apiKey')}</label><div className="key-input"><input type={showKey ? 'text' : 'password'} value={draft.apiKey} onChange={(event) => setDraft({ ...draft, apiKey: event.target.value })} placeholder={serverConfigured ? t('serverFallback') : 'sk-…'} autoComplete="off" /><button onClick={() => setShowKey((value) => !value)} aria-label={showKey ? t('hideKey') : t('showKey')}>{showKey ? <EyeOff size={17} /> : <Eye size={17} />}</button></div>
 
           <section className="vision-config"><label className="vision-toggle"><input type="checkbox" checked={draft.visionEnabled} onChange={(event) => setDraft({ ...draft, visionEnabled: event.target.checked })} /><span className="vision-switch" aria-hidden="true" /><span><strong>{t('visual')}</strong></span></label>{draft.visionEnabled && <div className="vision-fields">
             <label className="field-label">{t('visualUrl')}</label><input className="settings-input" value={draft.visionBaseUrl} onChange={(event) => setDraft({ ...draft, visionBaseUrl: event.target.value })} placeholder={t('inheritUrl')} autoComplete="url" />
-            <label className="field-label">{t('visualModel')}</label><input className="settings-input" value={draft.visionModel} onChange={(event) => setDraft({ ...draft, visionModel: event.target.value })} placeholder="vision-model-name" />
+            <label className="field-label">{t('visualModel')}</label>{modelPicker('vision', 'visionModel', 'vision-model-name')}
             <label className="field-label">{t('visualKey')}</label><div className="key-input"><input type={showVisionKey ? 'text' : 'password'} value={draft.visionApiKey} onChange={(event) => setDraft({ ...draft, visionApiKey: event.target.value })} placeholder={t('inheritKey')} autoComplete="off" /><button onClick={() => setShowVisionKey((value) => !value)} aria-label={showVisionKey ? t('hideKey') : t('showKey')}>{showVisionKey ? <EyeOff size={17} /> : <Eye size={17} />}</button></div>
           </div>}</section>
 
           <section className="vision-config"><label className="vision-toggle"><input type="checkbox" checked={draft.reasoningEnabled} onChange={(event) => setDraft({ ...draft, reasoningEnabled: event.target.checked })} /><span className="vision-switch" aria-hidden="true" /><span><strong>{t('enableDeepThinking')}</strong></span></label>{draft.reasoningEnabled && <div className="vision-fields">
             <label className="field-label">{t('reasoningUrl')}</label><input className="settings-input" value={draft.reasoningBaseUrl} onChange={(event) => setDraft({ ...draft, reasoningBaseUrl: event.target.value })} placeholder={t('inheritUrl')} autoComplete="url" />
-            <label className="field-label">{t('reasoningModel')}</label><input className="settings-input" value={draft.reasoningModel} onChange={(event) => setDraft({ ...draft, reasoningModel: event.target.value })} placeholder="reasoning-model-name" />
+            <label className="field-label">{t('reasoningModel')}</label>{modelPicker('reasoning', 'reasoningModel', 'reasoning-model-name')}
             <label className="field-label">{t('reasoningKey')}</label><div className="key-input"><input type={showReasoningKey ? 'text' : 'password'} value={draft.reasoningApiKey} onChange={(event) => setDraft({ ...draft, reasoningApiKey: event.target.value })} placeholder={t('inheritKey')} autoComplete="off" /><button onClick={() => setShowReasoningKey((value) => !value)} aria-label={showReasoningKey ? t('hideKey') : t('showKey')}>{showReasoningKey ? <EyeOff size={17} /> : <Eye size={17} />}</button></div>
           </div>}</section>
         </>}
@@ -115,7 +141,7 @@ export default function AiSettingsModal({ value, serverConfigured, skills, langu
         </section>}
 
         {tab === 'memory' && <section className="memory-settings">
-          <section className="project-memory-list"><div className="memory-section-heading"><span>{pack.code === 'en-US' ? 'Project memory' : '项目记忆'} · {projects.length}</span></div><div className="memory-file-list">{projects.map((project) => <article key={project.id}><Database size={15} /><div><strong>{project.fileName}</strong><small>{project.conversationCount} {t('memoryConversations')} · {new Date(project.updatedAt).toLocaleString()}</small></div><button onClick={() => { if (window.confirm(pack.code === 'en-US' ? 'Delete this project and all of its data?' : '确定删除此项目及其全部数据吗？')) void onDeleteProject(project.id) }}><Trash2 size={14} /></button></article>)}</div></section>
+          <section className="project-memory-list"><div className="memory-section-heading"><span>{pack.code === 'en-US' ? 'Project memory' : '项目记忆'} · {projects.length}</span></div><div className="memory-file-list">{projects.map((project) => <article key={project.id}><Database size={15} /><div><strong>{project.fileName}</strong><small>{project.conversationCount} {t('memoryConversations')} · {new Date(project.updatedAt).toLocaleString()}</small></div><button onClick={() => { if (window.confirm(pack.code === 'en-US' ? 'Deleting this project also permanently deletes all related conversations, notes, note images, highlights, and annotations. Continue?' : '删除项目将同时永久删除全部相关对话、未导出笔记、笔记墨迹图片、高亮与批注。是否继续？')) void onDeleteProject(project.id) }}><Trash2 size={14} /></button></article>)}</div></section>
           <section className="memory-card">
             <label className="vision-toggle"><input type="checkbox" checked={memorySettings.userMemoryEnabled} onChange={(event) => onMemorySettingsChange({ ...memorySettings, userMemoryEnabled: event.target.checked })} /><span className="vision-switch" aria-hidden="true" /><span><strong>{t('userMemory')}</strong><small>{t('userMemoryHelp')}</small></span></label>
             <textarea className="user-memory-editor" value={userMemory} onChange={(event) => onUserMemoryChange(event.target.value)} placeholder={t('userMemoryPlaceholder')} />

@@ -4,6 +4,11 @@ All notable changes to Raid are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- Added project-scoped document annotations with colored editable/movable text boxes, vector ink, whole-stroke erasing, persistence, project-deletion cleanup, and AI-selection image compositing.
+- Added on-demand available-model discovery inside each model field for OpenAI-compatible endpoints.
+
 ### Fixed
 
 - Closing a word-translation popover now aborts the active browser and upstream AI requests, while moving the popover no longer collapses the current text selection.
@@ -13,12 +18,16 @@ All notable changes to Raid are documented here.
 - Floating tool windows show narrow left/right drop shadows while being dragged and dock only when the pointer itself is released inside one of those edge zones.
 - Moved docking hints into click-through native overlay windows so floating tools cannot obscure them, and prevented panel dragging from changing the stored window size or propagating into the document viewer.
 - Fixed Windows DPI rounding that could enlarge a floating tool on every move by preserving its exact pre-drag native dimensions throughout the drag session.
+- Replaced the overlapping rectangular docking indicators with a single clipped blue/light or yellow/dark fog cue inside the main window.
+- Made text annotations behave like presentation text boxes: content automatically sizes single lines and explicit line breaks, while manual corner resizing scales both the box and its text.
+- Added Ctrl/trackpad-pinch PDF zooming while preserving the pointer's document position.
 - Normalized legacy panel layer values so in-window fallback panels also raise predictably when clicked.
 
 ### Changed
 
 - Renamed the application to Raid across the desktop window, interface metadata, documentation, and installer naming while retaining existing storage identifiers for seamless upgrades.
 - Enlarged the transparent book icon and increased its stroke weight across browser, application, taskbar, and installer assets.
+- Project deletion warnings now explicitly cover conversations, unexported notes, note images, highlights, and annotations.
 
 ## [1.0.0] - 2026-08-29
 

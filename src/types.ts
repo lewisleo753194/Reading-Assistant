@@ -15,6 +15,7 @@ export type SelectionResult = {
     page: number
     region: { left: number; top: number; width: number; height: number }
   }>
+  annotationTexts?: string[]
 }
 
 export type ChatMessage = {
@@ -60,6 +61,33 @@ export type DocumentHighlight = {
   regions?: SelectionResult['regions']
 }
 
+export type AnnotationPoint = { x: number; y: number }
+
+export type InkAnnotation = {
+  id: string
+  type: 'ink'
+  page: number
+  color: string
+  strokeWidth: number
+  points: AnnotationPoint[]
+}
+
+export type TextAnnotation = {
+  id: string
+  type: 'text'
+  page: number
+  color: string
+  x: number
+  y: number
+  width: number
+  height: number
+  fontSize: number
+  text: string
+}
+
+export type DocumentAnnotation = InkAnnotation | TextAnnotation
+export type AnnotationTool = 'text' | 'ink' | 'eraser'
+
 export type FolderImportResult = {
   canceled?: boolean
   folderPath?: string
@@ -100,6 +128,7 @@ export type WorkArea = {
   note: string
   noteAssets: Record<string, string>
   highlights: DocumentHighlight[]
+  annotations: DocumentAnnotation[]
 }
 
 export type PanelId = 'projects' | 'selection' | 'chat' | 'notes'
@@ -114,7 +143,7 @@ declare global {
       movePanelWindow: (id: string, x: number, y: number) => void
       preparePanelDrag: () => void
       setPanelDragging: (active: boolean) => void
-      setDockZones: (visible: boolean, active: 'left' | 'right' | null) => void
+      setDockZones: (visible: boolean, active: 'left' | 'right' | null, dark?: boolean) => void
     }
   }
 }

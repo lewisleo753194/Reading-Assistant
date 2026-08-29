@@ -102,16 +102,17 @@ function getDockZoneWindow(side) {
   zoneWindow.setIgnoreMouseEvents(true)
   zoneWindow.setAlwaysOnTop(true, 'screen-saver')
   zoneWindow.raidActive = false
-  zoneWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(`<style>html,body{width:100%;height:100%;margin:0;overflow:hidden;background:transparent}body{box-sizing:border-box;background:linear-gradient(90deg,rgba(20,24,32,.78),rgba(20,24,32,.12));box-shadow:inset 0 0 0 1px rgba(255,255,255,.13)}body.right{transform:scaleX(-1)}body.active{background:rgba(55,148,255,.72);box-shadow:inset 0 0 0 2px #3794ff,0 0 16px rgba(55,148,255,.75)}</style><body class="${side}"></body>`)}`)
+  zoneWindow.raidDark = false
+  zoneWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(`<style>html,body{width:100%;height:100%;margin:0;overflow:hidden;background:transparent;contain:strict;clip-path:inset(0)}body::before{content:"";position:absolute;inset:6% 0;opacity:.5;filter:blur(9px);background:radial-gradient(ellipse at left center,rgba(55,148,255,.92),rgba(55,148,255,.34) 42%,transparent 74%);transition:opacity .1s}body.right::before{transform:scaleX(-1)}body.dark::before{background:radial-gradient(ellipse at left center,rgba(246,195,55,.9),rgba(246,195,55,.34) 42%,transparent 74%)}body.active::before{opacity:.95;filter:blur(7px)}</style><body class="${side}"></body>`)}`)
   zoneWindow.webContents.on('did-finish-load', () => {
-    void zoneWindow.webContents.executeJavaScript(`document.body.classList.toggle('active', ${zoneWindow.raidActive})`).catch(() => undefined)
+    void zoneWindow.webContents.executeJavaScript(`document.body.classList.toggle('active', ${zoneWindow.raidActive});document.body.classList.toggle('dark', ${zoneWindow.raidDark})`).catch(() => undefined)
   })
   zoneWindow.on('closed', () => dockZoneWindows.delete(side))
   dockZoneWindows.set(side, zoneWindow)
   return zoneWindow
 }
 
-function setDockZones(visible, active = null) {
+function setDockZones(visible, active = null, dark = false) {
   if (!mainWindow || mainWindow.isDestroyed()) return
   if (!visible) {
     for (const zoneWindow of dockZoneWindows.values()) if (!zoneWindow.isDestroyed()) zoneWindow.hide()
@@ -122,7 +123,8 @@ function setDockZones(visible, active = null) {
     const bounds = mainWindow.getBounds()
     zoneWindow.setBounds({ x: side === 'left' ? bounds.x : bounds.x + bounds.width - dockZoneWidth, y: bounds.y, width: dockZoneWidth, height: bounds.height }, false)
     zoneWindow.raidActive = active === side
-    void zoneWindow.webContents.executeJavaScript(`document.body.classList.toggle('active', ${zoneWindow.raidActive})`).catch(() => undefined)
+    zoneWindow.raidDark = dark
+    void zoneWindow.webContents.executeJavaScript(`document.body.classList.toggle('active', ${zoneWindow.raidActive});document.body.classList.toggle('dark', ${zoneWindow.raidDark})`).catch(() => undefined)
     zoneWindow.showInactive()
   }
 }
@@ -178,7 +180,7 @@ ipcMain.on('reading-assistant:set-panel-dragging', (event, payload) => {
 ipcMain.on('reading-assistant:set-dock-zones', (event, payload) => {
   if (!getPanelWindow(event.sender)) return
   const active = payload?.active === 'left' || payload?.active === 'right' ? payload.active : null
-  setDockZones(Boolean(payload?.visible), active)
+  setDockZones(Boolean(payload?.visible), active, Boolean(payload?.dark))
 })
 
 async function createWindow() {

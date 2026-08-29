@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type Dispatch, type PointerEvent as ReactPointerEvent, type SetStateAction } from 'react'
 import { createPortal } from 'react-dom'
 import { TextLayer, type PDFDocumentProxy } from 'pdfjs-dist'
 import { Check, Copy, Highlighter, ImageOff, Languages, LoaderCircle, Sparkles, X } from 'lucide-react'
@@ -7,7 +7,8 @@ import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
 import SelectableCanvas from './SelectableCanvas'
-import type { DocumentHighlight, SelectionResult, SourceFile } from '../types'
+import AnnotationLayer from './AnnotationLayer'
+import type { AnnotationTool, DocumentAnnotation, DocumentHighlight, SelectionResult, SourceFile, TextAnnotation } from '../types'
 import { loadPdf } from '../lib/pdf'
 import { useI18n } from '../i18n'
 
@@ -23,9 +24,16 @@ type Props = {
   onTextTranslate: (text: string, signal: AbortSignal) => Promise<string>
   highlights: DocumentHighlight[]
   onHighlight: (highlight: Omit<DocumentHighlight, 'id'>) => void
+  annotationMode: boolean
+  annotationTool: AnnotationTool
+  annotationColor: string
+  annotations: DocumentAnnotation[]
+  onAnnotationsChange: Dispatch<SetStateAction<DocumentAnnotation[]>>
 }
 
-function PdfPage({ pdf, pageNumber, zoom, inverted, textSelectionEnabled, highlights }: { pdf: PDFDocumentProxy; pageNumber: number; zoom: number; inverted: boolean; textSelectionEnabled: boolean; highlights: DocumentHighlight[] }) {
+type AnnotationPageProps = Pick<Props, 'annotationMode' | 'annotationTool' | 'annotationColor' | 'annotations' | 'onAnnotationsChange'>
+
+function PdfPage({ pdf, pageNumber, zoom, inverted, textSelectionEnabled, highlights, ...annotationProps }: { pdf: PDFDocumentProxy; pageNumber: number; zoom: number; inverted: boolean; textSelectionEnabled: boolean; highlights: DocumentHighlight[] } & AnnotationPageProps) {
   const textLayerRef = useRef<HTMLDivElement>(null)
   const render = useCallback(async (canvas: HTMLCanvasElement) => {
     const page = await pdf.getPage(pageNumber)
@@ -66,10 +74,10 @@ function PdfPage({ pdf, pageNumber, zoom, inverted, textSelectionEnabled, highli
   }, [pdf, pageNumber, textSelectionEnabled, zoom, highlights])
 
   const pageRegions = highlights.flatMap((highlight) => (highlight.regions || []).filter((item) => item.page === pageNumber).map((item) => ({ ...item.region, color: highlight.color })))
-  return <SelectableCanvas pageNumber={pageNumber} render={render} onSelect={() => undefined} selectionEnabled={false} inverted={inverted} overlay={<><div className="saved-highlight-layer">{pageRegions.map((region, index) => <i key={index} style={{ left: `${region.left * 100}%`, top: `${region.top * 100}%`, width: `${region.width * 100}%`, height: `${region.height * 100}%`, background: region.color }} />)}</div><div ref={textLayerRef} className={`text-layer ${textSelectionEnabled ? 'enabled' : ''}`} /></>} />
+  return <SelectableCanvas pageNumber={pageNumber} render={render} onSelect={() => undefined} selectionEnabled={false} inverted={inverted} overlay={<><div className="saved-highlight-layer">{pageRegions.map((region, index) => <i key={index} style={{ left: `${region.left * 100}%`, top: `${region.top * 100}%`, width: `${region.width * 100}%`, height: `${region.height * 100}%`, background: region.color }} />)}</div><div ref={textLayerRef} className={`text-layer ${textSelectionEnabled ? 'enabled' : ''}`} /><AnnotationLayer pageNumber={pageNumber} active={annotationProps.annotationMode} tool={annotationProps.annotationTool} color={annotationProps.annotationColor} annotations={annotationProps.annotations} onChange={annotationProps.onAnnotationsChange} /></>} />
 }
 
-function ImagePage({ source, zoom, inverted }: { source: SourceFile; zoom: number; inverted: boolean }) {
+function ImagePage({ source, zoom, inverted, ...annotationProps }: { source: SourceFile; zoom: number; inverted: boolean } & AnnotationPageProps) {
   const render = useCallback(async (canvas: HTMLCanvasElement) => {
     const image = new Image()
     image.src = source.url
@@ -79,14 +87,40 @@ function ImagePage({ source, zoom, inverted }: { source: SourceFile; zoom: numbe
     canvas.style.width = `${Math.min(1100, image.naturalWidth) * zoom}px`
     contextSafe(canvas)?.drawImage(image, 0, 0)
   }, [source.url, zoom])
-  return <SelectableCanvas pageNumber={1} className="image-page" render={render} onSelect={() => undefined} selectionEnabled={false} inverted={inverted} />
+  return <SelectableCanvas pageNumber={1} className="image-page" render={render} onSelect={() => undefined} selectionEnabled={false} inverted={inverted} overlay={<AnnotationLayer pageNumber={1} active={annotationProps.annotationMode} tool={annotationProps.annotationTool} color={annotationProps.annotationColor} annotations={annotationProps.annotations} onChange={annotationProps.onAnnotationsChange} />} />
 }
 
 const contextSafe = (canvas: HTMLCanvasElement) => canvas.getContext('2d')
 
 type SelectionRect = { left: number; top: number; width: number; height: number }
 
-export default function DocumentViewer({ source, zoom, currentPage, inverted, areaSelectionEnabled, onPdfReady, onSelect, onTextAi, onTextTranslate, highlights, onHighlight }: Props) {
+function drawAnnotationsIntoCrop(context: CanvasRenderingContext2D, pageAnnotations: DocumentAnnotation[], region: SelectionRect, width: number, height: number) {
+  const x = (value: number) => (value - region.left) / region.width * width
+  const y = (value: number) => (value - region.top) / region.height * height
+  context.save()
+  context.lineCap = 'round'; context.lineJoin = 'round'
+  pageAnnotations.forEach((annotation) => {
+    if (annotation.type === 'ink') {
+      if (annotation.points.length < 2) return
+      context.beginPath()
+      annotation.points.forEach((point, index) => index ? context.lineTo(x(point.x), y(point.y)) : context.moveTo(x(point.x), y(point.y)))
+      context.strokeStyle = annotation.color
+      context.lineWidth = Math.max(2, annotation.strokeWidth / region.width * width)
+      context.stroke()
+      return
+    }
+    if (!annotation.text.trim()) return
+    const fontSize = Math.max(11, width * .025 / region.width)
+    context.font = `600 ${fontSize}px sans-serif`
+    context.fillStyle = annotation.color
+    context.textBaseline = 'top'
+    const maxWidth = annotation.width / region.width * width
+    annotation.text.split(/\n/).forEach((line, index) => context.fillText(line, x(annotation.x), y(annotation.y) + index * fontSize * 1.25, maxWidth))
+  })
+  context.restore()
+}
+
+export default function DocumentViewer({ source, zoom, currentPage, inverted, areaSelectionEnabled, onPdfReady, onSelect, onTextAi, onTextTranslate, highlights, onHighlight, annotationMode, annotationTool, annotationColor, annotations, onAnnotationsChange }: Props) {
   const { t, pack } = useI18n()
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null)
   const [error, setError] = useState('')
@@ -121,7 +155,7 @@ export default function DocumentViewer({ source, zoom, currentPage, inverted, ar
       window.getSelection()?.removeAllRanges()
     })
     return () => cancelAnimationFrame(frame)
-  }, [areaSelectionEnabled])
+  }, [areaSelectionEnabled, annotationMode])
 
   useEffect(() => () => translationControllerRef.current?.abort(), [])
 
@@ -181,11 +215,11 @@ export default function DocumentViewer({ source, zoom, currentPage, inverted, ar
   }
 
   const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!areaSelectionEnabled && textAction && !(event.target as HTMLElement).closest('.text-action-popover')) {
+    if (!areaSelectionEnabled && !annotationMode && textAction && !(event.target as HTMLElement).closest('.text-action-popover')) {
       translationControllerRef.current?.abort(); translationControllerRef.current = null
       setTextAction(null); setTranslation(''); setTranslating(false); window.getSelection()?.removeAllRanges()
     }
-    if (!areaSelectionEnabled || event.button !== 0 || !(event.target as HTMLElement).closest('.selectable-page')) return
+    if (annotationMode || !areaSelectionEnabled || event.button !== 0 || !(event.target as HTMLElement).closest('.selectable-page')) return
     event.currentTarget.setPointerCapture(event.pointerId)
     const point = pointFromClient(event.clientX, event.clientY)
     startRef.current = point
@@ -258,10 +292,15 @@ export default function DocumentViewer({ source, zoom, currentPage, inverted, ar
         crop.width,
         crop.height,
       )
+      const cropContext = crop.getContext('2d')
+      if (cropContext) drawAnnotationsIntoCrop(cropContext, annotations.filter((annotation) => annotation.page === Number(pageElement.dataset.pageNumber)), relative, crop.width, crop.height)
       images.push(crop.toDataURL('image/jpeg', 0.94))
       regions.push({ page: Number(pageElement.dataset.pageNumber), region: relative })
     })
-    if (images.length) onSelect({ image: images[0], images, page: regions[0].page, regions })
+    if (images.length) {
+      const annotationTexts = regions.map(({ page, region }) => annotations.filter((annotation): annotation is TextAnnotation => annotation.type === 'text' && annotation.page === page && annotation.x <= region.left + region.width && annotation.x + annotation.width >= region.left && annotation.y <= region.top + region.height && annotation.y + (annotation.height ?? .1) >= region.top).map((annotation) => annotation.text.trim()).filter(Boolean).join('\n'))
+      onSelect({ image: images[0], images, page: regions[0].page, regions, annotationTexts })
+    }
   }
 
   const showTextActions = () => {
@@ -299,6 +338,7 @@ export default function DocumentViewer({ source, zoom, currentPage, inverted, ar
 
   const onPointerUp = (event: ReactPointerEvent<HTMLDivElement>) => {
     if ((event.target as HTMLElement).closest('.text-action-popover')) return
+    if (annotationMode) return
     if (areaSelectionEnabled) finishSelection()
     else showTextActions()
   }
@@ -333,7 +373,7 @@ export default function DocumentViewer({ source, zoom, currentPage, inverted, ar
     window.getSelection()?.removeAllRanges()
   }
 
-  const textActionPopover = !areaSelectionEnabled && textAction ? <div
+  const textActionPopover = !areaSelectionEnabled && !annotationMode && textAction ? <div
     className="text-action-popover"
     style={{ left: textAction.left, top: textAction.top }}
     onPointerDown={(event) => {
@@ -369,13 +409,13 @@ export default function DocumentViewer({ source, zoom, currentPage, inverted, ar
   </div> : null
 
   return (
-    <div className={`document-stack ${areaSelectionEnabled ? 'continuous-selection' : 'text-selection-mode'}`} ref={stackRef} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={() => areaSelectionEnabled && finishSelection()}>
+    <div className={`document-stack ${annotationMode ? 'annotation-mode' : areaSelectionEnabled ? 'continuous-selection' : 'text-selection-mode'}`} ref={stackRef} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={() => areaSelectionEnabled && !annotationMode && finishSelection()}>
       {source.kind === 'image'
-        ? <ImagePage source={source} zoom={zoom} inverted={inverted} />
+        ? <ImagePage source={source} zoom={zoom} inverted={inverted} annotationMode={annotationMode} annotationTool={annotationTool} annotationColor={annotationColor} annotations={annotations} onAnnotationsChange={onAnnotationsChange} />
         : pdf && Array.from({ length: pdf.numPages }, (_, index) => {
           const pageNumber = index + 1
           return Math.abs(pageNumber - currentPage) <= renderRadius
-            ? <PdfPage key={pageNumber} pdf={pdf} pageNumber={pageNumber} zoom={zoom} inverted={inverted} textSelectionEnabled={!areaSelectionEnabled} highlights={highlights} />
+            ? <PdfPage key={pageNumber} pdf={pdf} pageNumber={pageNumber} zoom={zoom} inverted={inverted} textSelectionEnabled={!areaSelectionEnabled && !annotationMode} highlights={highlights} annotationMode={annotationMode} annotationTool={annotationTool} annotationColor={annotationColor} annotations={annotations} onAnnotationsChange={onAnnotationsChange} />
             : <div key={pageNumber} className="pdf-page-placeholder" data-page-number={pageNumber} style={{ width: 500 * zoom, height: 710 * zoom }}><span>{pageNumber}</span></div>
         })}
       {selectionRect && <div className="document-selection-rect" style={selectionRect} />}

@@ -1,4 +1,4 @@
-import type { Conversation } from '../types'
+import type { Conversation, DocumentAnnotation, DocumentHighlight } from '../types'
 
 export type StoredConversation = Conversation
 
@@ -20,7 +20,8 @@ export type FileMemoryRecord = {
   documentTextVersion?: number
   note?: string
   noteAssets?: Record<string, string>
-  highlights?: Array<{ id: string; page: number; text: string; color: string }>
+  highlights?: DocumentHighlight[]
+  annotations?: DocumentAnnotation[]
 }
 
 export type FileMemorySummary = Pick<FileMemoryRecord, 'id' | 'fileName' | 'fileSize' | 'fileType' | 'lastModified' | 'updatedAt'> & { conversationCount: number }
