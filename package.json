@@ -45,6 +45,10 @@
     "win": {
       "target": "nsis",
       "icon": "electron/app-icon.ico",
+      "electronLanguages": [
+        "en-US",
+        "zh-CN"
+      ],
       "artifactName": "Reading-Assistant-Setup-${version}.${ext}"
     },
     "nsis": {
@@ -56,17 +60,7 @@
   },
   "dependencies": {
     "dotenv": "latest",
-    "express": "latest",
-    "katex": "^0.18.4",
-    "lucide-react": "latest",
-    "pdfjs-dist": "latest",
-    "react": "latest",
-    "react-dom": "latest",
-    "react-markdown": "latest",
-    "rehype-katex": "^7.0.1",
-    "remark-gfm": "^4.0.1",
-    "remark-math": "^6.0.0",
-    "tesseract.js": "latest"
+    "express": "latest"
   },
   "devDependencies": {
     "@eslint/js": "latest",
@@ -82,6 +76,16 @@
     "eslint-plugin-react-hooks": "latest",
     "eslint-plugin-react-refresh": "latest",
     "globals": "latest",
+    "katex": "^0.18.4",
+    "lucide-react": "latest",
+    "pdfjs-dist": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "react-markdown": "latest",
+    "rehype-katex": "^7.0.1",
+    "remark-gfm": "^4.0.1",
+    "remark-math": "^6.0.0",
+    "tesseract.js": "latest",
     "typescript": "latest",
     "typescript-eslint": "latest",
     "vite": "latest"
