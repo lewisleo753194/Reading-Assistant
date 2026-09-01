@@ -3,12 +3,28 @@
 [中文](README.md) | [English](README_EN.md)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-![Version](https://img.shields.io/badge/version-0.3.0-6b7cff)
+![Version](https://img.shields.io/badge/version-2.2.0-6b7cff)
 ![Platform](https://img.shields.io/badge/platform-Windows-0078d4)
 
 Raid is an AI-assisted PDF and image reader for papers, textbooks, and technical documents. It combines continuous PDF reading, text selection, cross-page area capture, OCR, document-aware conversations, and user-configured OpenAI Chat Completions-compatible models.
 
-> Created by **xyLee** · [Repository](https://github.com/lxymol/Reading-Assistant)
+> Maintained by **LewisLeo44** · [Repository](https://github.com/lewisleo753194/Reading-Assistant)
+
+## Origin and acknowledgements
+
+This project continues from **version 1.0.0** of [`Reading-Assistant`](https://github.com/lxymol/Reading-Assistant), created by **xyLee (GitHub: [`lxymol`](https://github.com/lxymol))**. Sincere thanks to the original author for the initial product design, PDF reading and selection interactions, OCR and AI Q&A workflow, Electron desktop foundation, and open-source release that made this continued work possible.
+
+Compared with the original author's version 1.0.0, the current 2.2.0 release primarily adds or improves:
+
+- Multi-source study projects with a separate source scope for each conversation.
+- ChatGPT Plus / Codex sign-in, model selection, streamed answers, deeper reasoning, and optional web search.
+- Contextual follow-ups that retain the real question, source scope, source names, page anchors, and attachments, and reuse recent questions when searching large documents.
+- Conversation-only attachments, OpenAI Responses original-file indexing, and project file search.
+- A fast path for large scanned PDFs using representative visual pages instead of blocking on full-document OCR, plus selection OCR and cancellation.
+- Project notes, text and ink annotations, navigable source citations, user memory, and long-conversation compaction.
+- Improved native floating panels and docking, concurrent requests, error isolation, and Windows build and release workflows.
+
+This fork preserves the original copyright notice required by the MIT License and adds the current maintainer notice.
 
 ## Features
 
@@ -31,13 +47,18 @@ Raid is an AI-assisted PDF and image reader for papers, textbooks, and technical
 
 ## Installation
 
-Windows users can download the latest installer from [GitHub Releases](https://github.com/lxymol/Reading-Assistant/releases). The installer does not modify system environment variables and does not require a separate Node.js installation.
+Windows users can download the latest installer from [GitHub Releases](https://github.com/lewisleo753194/Reading-Assistant/releases). The installer does not modify system environment variables and does not require a separate Node.js installation.
 
-Current version: `0.3.0`.
+Current version: `2.2.0`.
 
 ## AI configuration
 
-Open Settings in the upper-right corner and enter a compatible API base URL, model name, and API key. The application does not include provider presets.
+Open Settings in the upper-right corner and choose one of two connection modes:
+
+- **ChatGPT Plus / Codex**: install the `codex` CLI, click **Sign in** in Settings, finish the browser login, then load and select a model. No API key is required. This mode uses the current ChatGPT account through the local `codex app-server`.
+- **API-compatible service**: keep using the original base URL, model name, and API key fields. The original default, vision, and deep-thinking model configurations remain available.
+
+Codex mode replaces only the model call. PDF/image handling, OCR, document and selection context, Skills, memory, notes, annotations, and page citations continue through the existing Raid workflow. Each Codex request uses a temporary read-only thread that is discarded after the answer.
 
 | Configuration | Purpose |
 | --- | --- |
@@ -70,6 +91,8 @@ When an image selection and Deep thinking are both active, the app asks the user
 
 Node.js 20 or later is required.
 
+ChatGPT Plus / Codex mode also requires `codex --version` to work from the command line. Set `CODEX_CLI_PATH` to the full CLI path when it is not on `PATH`.
+
 ```bash
 npm install
 npm run dev
@@ -85,11 +108,12 @@ npm run desktop:test
 
 ```bash
 npm run lint
+npm run test:codex
 npm run build
 npm run desktop:pack
 ```
 
-The Windows NSIS installer is written to `release-0.3.0/`. Release artifacts are ignored by Git and should be uploaded through GitHub Releases instead of committed to source history.
+The Windows NSIS installer is written to `release-2.2.0/`. Release artifacts are ignored by Git and should be uploaded through GitHub Releases instead of committed to source history.
 
 ## Privacy and security
 
@@ -97,6 +121,7 @@ The Windows NSIS installer is written to `release-0.3.0/`. Release artifacts are
 - A configured AI service receives data only after an AI action: relevant selections, required document context, recent conversation messages, and up to four visual crops when applicable.
 - When User memory is enabled, the current request and assistant response are sent to the default model to update the profile; document source text is not used as profile-learning material.
 - API settings are stored in the application's local data directory. They are not included in the repository or installer, but they are not protected by an operating-system credential vault. Use trusted devices only.
+- ChatGPT credentials are managed by the Codex CLI; Raid neither reads nor stores access tokens. Material sent through Codex is processed under the ChatGPT/Codex service terms.
 - `.env` files and local build outputs are ignored by Git. Run a secret scan before publishing and verify that no key was staged accidentally.
 
 See [SECURITY.md](SECURITY.md) for vulnerability reporting guidance.

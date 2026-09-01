@@ -2,25 +2,29 @@
   "name": "reading-assistant",
   "description": "支持 PDF、图片、区域选择与视觉 AI 分析的桌面阅读助手",
   "author": "xyLee",
+  "maintainers": [
+    "LewisLeo44"
+  ],
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/lxymol/Reading-Assistant.git"
+    "url": "git+https://github.com/lewisleo753194/Reading-Assistant.git"
   },
   "bugs": {
-    "url": "https://github.com/lxymol/Reading-Assistant/issues"
+    "url": "https://github.com/lewisleo753194/Reading-Assistant/issues"
   },
-  "homepage": "https://github.com/lxymol/Reading-Assistant#readme",
+  "homepage": "https://github.com/lewisleo753194/Reading-Assistant#readme",
   "engines": {
     "node": ">=20"
   },
   "private": true,
-  "version": "1.0.0",
+  "version": "2.2.0",
   "type": "module",
   "main": "electron/main.mjs",
   "scripts": {
     "dev": "concurrently -k \"vite\" \"node --watch server/index.mjs\"",
     "build": "tsc -b && vite build",
+    "test:codex": "node --test tests/codex-app-server.test.mjs tests/ai-compatible-regression.test.mjs tests/responses-file-search.test.mjs tests/project-ui-regression.test.mjs tests/streaming-ui-regression.test.mjs tests/selection-ocr-regression.test.mjs tests/conversation-attachments.test.mjs",
     "preview": "node server/index.mjs",
     "lint": "eslint .",
     "desktop": "npm run build && electron .",
@@ -34,7 +38,7 @@
     "asar": true,
     "electronDist": "node_modules/electron/dist",
     "directories": {
-      "output": "release-1.0.0"
+      "output": "release-2.2.0"
     },
     "files": [
       "dist/**/*",

@@ -1,6 +1,7 @@
 import type { AiConfig, ImportedSkill, MemorySettings, PanelId, PanelLayout } from '../types'
 
 export const defaultAiConfig: AiConfig = {
+  provider: 'openai-compatible',
   apiKey: '',
   baseUrl: '',
   model: '',
@@ -12,6 +13,10 @@ export const defaultAiConfig: AiConfig = {
   reasoningApiKey: '',
   reasoningBaseUrl: '',
   reasoningModel: '',
+  codexModel: '',
+  webSearchEnabled: true,
+  codexDeepThinkingEnabled: false,
+  codexReasoningEffort: 'medium',
 }
 
 const readJson = <T,>(key: string, fallback: T): T => {
@@ -36,7 +41,8 @@ const defaultPanels: Record<PanelId, PanelLayout> = {
   projects: { open: true, dock: 'left', x: 90, y: 70, width: 310, height: 620, dockSize: 1, z: 40 },
   selection: { open: false, dock: 'left', x: 130, y: 90, width: 340, height: 560, dockSize: 1, z: 41 },
   chat: { open: false, dock: 'left', x: 720, y: 65, width: 420, height: 720, dockSize: 1, z: 42 },
-  notes: { open: false, dock: 'left', x: 640, y: 100, width: 430, height: 650, dockSize: 1, z: 43 },
+  studio: { open: true, dock: 'right', x: 760, y: 75, width: 360, height: 650, dockSize: 1, z: 43 },
+  notes: { open: false, dock: 'left', x: 640, y: 100, width: 430, height: 650, dockSize: 1, z: 44 },
 }
 
 export const loadPanelLayouts = (): Record<PanelId, PanelLayout> => {

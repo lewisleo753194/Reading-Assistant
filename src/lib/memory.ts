@@ -1,9 +1,10 @@
-import type { Conversation, DocumentAnnotation, DocumentHighlight } from '../types'
+import type { ChatAttachmentKind, Conversation, DocumentAnnotation, DocumentHighlight, StudyProject } from '../types'
 
 export type StoredConversation = Conversation
 
 export type FileMemoryRecord = {
   id: string
+  projectId?: string
   fileName: string
   fileSize: number
   fileType: string
@@ -14,7 +15,7 @@ export type FileMemoryRecord = {
   currentPage: number
   zoom: number
   areaSelectionEnabled: boolean
-  scope: 'selection' | 'document'
+  scope: 'general' | 'selection' | 'document' | 'notebook'
   fileBlob?: Blob
   documentText?: string
   documentTextVersion?: number
@@ -22,28 +23,56 @@ export type FileMemoryRecord = {
   noteAssets?: Record<string, string>
   highlights?: DocumentHighlight[]
   annotations?: DocumentAnnotation[]
+  openaiFileId?: string
+  indexStatus?: 'local' | 'uploading' | 'ready' | 'error'
 }
+
+export type ProjectMemoryRecord = StudyProject
 
 export type FileMemorySummary = Pick<FileMemoryRecord, 'id' | 'fileName' | 'fileSize' | 'fileType' | 'lastModified' | 'updatedAt'> & { conversationCount: number }
 
 const databaseName = 'reading-assistant-memory'
 const storeName = 'file-memories'
+const projectStoreName = 'project-memories'
+const conversationAttachmentStoreName = 'conversation-attachments'
+
+export type ConversationAttachmentRecord = {
+  id: string
+  projectId: string
+  conversationId: string
+  messageId: string
+  name: string
+  kind: ChatAttachmentKind
+  mimeType: string
+  size: number
+  lastModified: number
+  createdAt: number
+  fileBlob: Blob
+  preparedText?: string
+}
 
 function openDatabase() {
   return new Promise<IDBDatabase>((resolve, reject) => {
-    const request = indexedDB.open(databaseName, 1)
+    const request = indexedDB.open(databaseName, 3)
     request.onupgradeneeded = () => {
       if (!request.result.objectStoreNames.contains(storeName)) request.result.createObjectStore(storeName, { keyPath: 'id' })
+      if (!request.result.objectStoreNames.contains(projectStoreName)) request.result.createObjectStore(projectStoreName, { keyPath: 'id' })
+      if (!request.result.objectStoreNames.contains(conversationAttachmentStoreName)) {
+        const attachmentStore = request.result.createObjectStore(conversationAttachmentStoreName, { keyPath: 'id' })
+        attachmentStore.createIndex('conversationId', 'conversationId')
+        attachmentStore.createIndex('projectId', 'projectId')
+        attachmentStore.createIndex('messageId', 'messageId')
+      }
     }
     request.onsuccess = () => resolve(request.result)
     request.onerror = () => reject(request.error || new Error('无法打开文件记忆数据库。'))
   })
 }
 
-function runRequest<T>(mode: IDBTransactionMode, operation: (store: IDBObjectStore) => IDBRequest<T>) {
+function runRequest<T>(mode: IDBTransactionMode, operation: (store: IDBObjectStore) => IDBRequest<T>, targetStore = storeName) {
   return openDatabase().then((database) => new Promise<T>((resolve, reject) => {
-    const transaction = database.transaction(storeName, mode)
-    const request = operation(transaction.objectStore(storeName))
+    const transaction = database.transaction(targetStore, mode)
+    const request = operation(transaction.objectStore(targetStore))
     let result: T
     request.onsuccess = () => { result = request.result }
     request.onerror = () => reject(request.error || new Error('文件记忆操作失败。'))
@@ -53,8 +82,8 @@ function runRequest<T>(mode: IDBTransactionMode, operation: (store: IDBObjectSto
   }))
 }
 
-export function getFileMemoryId(file: File) {
-  return JSON.stringify([file.name, file.size, file.lastModified, file.type])
+export function getFileMemoryId(file: File, projectId = '') {
+  return JSON.stringify([projectId, file.name, file.size, file.lastModified, file.type])
 }
 
 export function getFileMemory(id: string) {
@@ -84,4 +113,41 @@ export async function listFileMemories(): Promise<FileMemorySummary[]> {
     updatedAt: record.updatedAt,
     conversationCount: record.conversations.length,
   }))
+}
+
+export function saveProjectMemory(record: ProjectMemoryRecord) {
+  return runRequest<IDBValidKey>('readwrite', (store) => store.put(record), projectStoreName)
+}
+
+export function listProjectMemories() {
+  return runRequest<ProjectMemoryRecord[]>('readonly', (store) => store.getAll(), projectStoreName)
+}
+
+export function deleteProjectMemory(id: string) {
+  return runRequest<undefined>('readwrite', (store) => store.delete(id), projectStoreName)
+}
+
+export function saveConversationAttachment(record: ConversationAttachmentRecord) {
+  return runRequest<IDBValidKey>('readwrite', (store) => store.put(record), conversationAttachmentStoreName)
+}
+
+export function listConversationAttachments(conversationId: string) {
+  return runRequest<ConversationAttachmentRecord[]>('readonly', (store) => store.index('conversationId').getAll(conversationId), conversationAttachmentStoreName)
+}
+
+export function deleteConversationAttachment(id: string) {
+  return runRequest<undefined>('readwrite', (store) => store.delete(id), conversationAttachmentStoreName)
+}
+
+async function deleteAttachmentRecords(records: ConversationAttachmentRecord[]) {
+  await Promise.all(records.map((record) => deleteConversationAttachment(record.id)))
+}
+
+export async function deleteConversationAttachments(conversationId: string) {
+  await deleteAttachmentRecords(await listConversationAttachments(conversationId))
+}
+
+export async function deleteProjectConversationAttachments(projectId: string) {
+  const records = await runRequest<ConversationAttachmentRecord[]>('readonly', (store) => store.index('projectId').getAll(projectId), conversationAttachmentStoreName)
+  await deleteAttachmentRecords(records)
 }

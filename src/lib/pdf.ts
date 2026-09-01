@@ -7,11 +7,12 @@ export async function loadPdf(url: string): Promise<PDFDocumentProxy> {
   return getDocument({ url }).promise
 }
 
-export async function extractPdfText(pdf: PDFDocumentProxy, onProgress?: (done: number, total: number) => void, maximumCharacters = Number.POSITIVE_INFINITY) {
+export async function extractPdfText(pdf: PDFDocumentProxy, onProgress?: (done: number, total: number) => void, maximumCharacters = Number.POSITIVE_INFINITY, signal?: AbortSignal) {
   const pages: string[] = []
   const pageNumbers = Array.from({ length: pdf.numPages }, (_, index) => index + 1)
   let characters = 0
   for (let index = 0; index < pageNumbers.length; index += 1) {
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
     const pageNumber = pageNumbers[index]
     const page = await pdf.getPage(pageNumber)
     const content = await page.getTextContent()

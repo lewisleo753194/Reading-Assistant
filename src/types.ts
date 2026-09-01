@@ -2,9 +2,11 @@ import type { PDFDocumentProxy } from 'pdfjs-dist'
 
 export type SourceFile = {
   name: string
-  kind: 'pdf' | 'image'
+  kind: 'pdf' | 'image' | 'text'
   url: string
   file: File
+  openaiFileId?: string
+  indexStatus?: 'local' | 'uploading' | 'ready' | 'error'
 }
 
 export type SelectionResult = {
@@ -22,11 +24,35 @@ export type ChatMessage = {
   id: string
   role: 'user' | 'assistant'
   content: string
+  turnId?: string
+  status?: 'completed' | 'streaming' | 'stopped' | 'error'
+  contextSnapshot?: ChatContextSnapshot
   label?: string
   sourcePage?: number
+  streaming?: boolean
+  attachments?: ChatAttachmentSummary[]
+}
+
+export type ChatContextSnapshot = {
+  mode: 'general' | 'selection' | 'document' | 'notebook'
+  sourceNames: string[]
+  anchorPages: number[]
+  attachmentNames: string[]
+  selectedSourceCount?: number
+  totalSourceCount?: number
+}
+
+export type ChatAttachmentKind = 'image' | 'pdf' | 'text'
+
+export type ChatAttachmentSummary = {
+  id: string
+  name: string
+  kind: ChatAttachmentKind
+  size: number
 }
 
 export type AiConfig = {
+  provider: 'openai-compatible' | 'openai-responses' | 'codex'
   apiKey: string
   baseUrl: string
   model: string
@@ -38,6 +64,17 @@ export type AiConfig = {
   reasoningApiKey: string
   reasoningBaseUrl: string
   reasoningModel: string
+  codexModel: string
+  webSearchEnabled: boolean
+  codexDeepThinkingEnabled: boolean
+  codexReasoningEffort: 'low' | 'medium' | 'high' | 'xhigh'
+}
+
+export type CodexAccountStatus = {
+  available: boolean
+  account: null | { type: 'chatgpt' | 'apiKey'; email?: string | null; planType?: string }
+  requiresOpenaiAuth?: boolean
+  error?: string
 }
 
 export type ImportedSkill = {
@@ -108,10 +145,13 @@ export type Conversation = {
   id: string
   title: string
   history: ChatMessage[]
+  /** Undefined means every source in the project; an array keeps a per-conversation custom subset. */
+  sourceMemoryKeys?: string[]
 }
 
 export type WorkArea = {
   id: string
+  projectId: string
   memoryKey: string
   source: SourceFile
   pdf: PDFDocumentProxy | null
@@ -124,14 +164,24 @@ export type WorkArea = {
   zoom: number
   currentPage: number
   areaSelectionEnabled: boolean
-  scope: 'selection' | 'document'
+  scope: 'general' | 'selection' | 'document' | 'notebook'
   note: string
   noteAssets: Record<string, string>
   highlights: DocumentHighlight[]
   annotations: DocumentAnnotation[]
 }
 
-export type PanelId = 'projects' | 'selection' | 'chat' | 'notes'
+export type StudyProject = {
+  id: string
+  name: string
+  createdAt: number
+  updatedAt: number
+  conversations: Conversation[]
+  activeConversationId: string
+  vectorStoreId?: string
+}
+
+export type PanelId = 'projects' | 'selection' | 'chat' | 'studio' | 'notes'
 export type PanelDock = 'left' | 'right' | 'float'
 export type PanelLayout = { open: boolean; dock: PanelDock; x: number; y: number; width: number; height: number; dockSize: number; z: number }
 

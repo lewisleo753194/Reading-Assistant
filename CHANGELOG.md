@@ -4,13 +4,42 @@ All notable changes to Raid are documented here.
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-09-01
+
 ### Added
 
+- Added ChatGPT Plus / Codex integration with hosted sign-in, model discovery, streaming answers, optional web search, and a read-only ephemeral execution boundary.
+- Added project conversations, conversation-only attachments, project-source subsets, local annotations, and explicit context indicators for every question.
+- Added contextual follow-ups that retain the user's actual question, the source scope, source names, page anchors, and attachment names for each turn.
+- Added long-conversation compaction and persistent extraction caching for text-based conversation attachments.
+
+### Fixed
+
+- Follow-up questions such as “why”, “continue”, and “this” now reuse recent user questions when retrieving relevant passages from large documents.
+- Failed or stopped generations no longer pollute later model context.
+- Deleting either side of a turn now removes the complete question-and-answer pair and safely stops an in-progress answer.
+- Large scanned PDFs now use representative visual pages for the first answer instead of blocking on full-document OCR.
+
+### Changed
+
+- Documented that this maintained fork is based on xyLee/lxymol's version 1.0.0, with thanks and a comparison of the major subsequent improvements.
+- Updated the maintained fork's repository metadata to the authenticated GitHub account `lewisleo753194`, with the maintainer credited publicly as LewisLeo44, while preserving the original author and copyright attribution.
+- Updated the application and release version to 2.2.0 while retaining the existing Windows application ID for upgrade compatibility.
+
+## [2.0.0] - 2026-09-01
+
+### Added
+
+- Added per-conversation project-source selection with Select all / Current only shortcuts and an always-visible effective-context status bar.
+- Added a default free-question scope that skips selection, document extraction, and project-file search while preserving conversation history and explicitly attached files.
 - Added project-scoped document annotations with colored editable/movable text boxes, vector ink, whole-stroke erasing, persistence, project-deletion cleanup, and AI-selection image compositing.
 - Added on-demand available-model discovery inside each model field for OpenAI-compatible endpoints.
 
 ### Fixed
 
+- Free-question mode now replaces source-processing shortcuts with a clear scope hint, preventing translation, explanation, insight, or summary actions from running without source material.
+- Memory settings now separate full project management, per-source local records, and user memory, with deletion confirmations that match the actual data removed.
+- Empty selection requests no longer silently fall back to full-document processing; the app now asks the user to select content or choose an explicit scope.
 - Closing a word-translation popover now aborts the active browser and upstream AI requests, while moving the popover no longer collapses the current text selection.
 - Inline translations now render Markdown, and single-word prompts place American IPA beside the primary meaning without a redundant label.
 - Projects can retain an intentionally empty conversation list after their final conversation is deleted; a new conversation is created lazily only when the user asks AI another question.
