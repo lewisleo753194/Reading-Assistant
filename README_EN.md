@@ -3,7 +3,7 @@
 [中文](README.md) | [English](README_EN.md)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-![Version](https://img.shields.io/badge/version-2.2.0-6b7cff)
+![Version](https://img.shields.io/badge/version-2.3.0-6b7cff)
 ![Platform](https://img.shields.io/badge/platform-Windows-0078d4)
 
 Raid is an AI-assisted PDF and image reader for papers, textbooks, and technical documents. It combines continuous PDF reading, text selection, cross-page area capture, OCR, document-aware conversations, and user-configured OpenAI Chat Completions-compatible models.
@@ -14,7 +14,7 @@ Raid is an AI-assisted PDF and image reader for papers, textbooks, and technical
 
 This project continues from **version 1.0.0** of [`Reading-Assistant`](https://github.com/lxymol/Reading-Assistant), created by **xyLee (GitHub: [`lxymol`](https://github.com/lxymol))**. Sincere thanks to the original author for the initial product design, PDF reading and selection interactions, OCR and AI Q&A workflow, Electron desktop foundation, and open-source release that made this continued work possible.
 
-Compared with the original author's version 1.0.0, the current 2.2.0 release primarily adds or improves:
+Compared with the original author's version 1.0.0, the current 2.3.0 release primarily adds or improves:
 
 - Multi-source study projects with a separate source scope for each conversation.
 - ChatGPT Plus / Codex sign-in, model selection, streamed answers, deeper reasoning, and optional web search.
@@ -23,6 +23,8 @@ Compared with the original author's version 1.0.0, the current 2.2.0 release pri
 - A fast path for large scanned PDFs using representative visual pages instead of blocking on full-document OCR, plus selection OCR and cancellation.
 - Project notes, text and ink annotations, navigable source citations, user memory, and long-conversation compaction.
 - Improved native floating panels and docking, concurrent requests, error isolation, and Windows build and release workflows.
+- Application-drive `RaidData` partitions for persistent data, runtime files, and Chromium caches, including verified legacy migration and a bounded disk cache to reduce system-drive growth.
+- Repairs for page navigation, forced scrolling during streamed answers, and scope isolation across free, document, selection, and project-source questions.
 
 This fork preserves the original copyright notice required by the MIT License and adds the current maintainer notice.
 
@@ -49,7 +51,9 @@ This fork preserves the original copyright notice required by the MIT License an
 
 Windows users can download the latest installer from [GitHub Releases](https://github.com/lewisleo753194/Reading-Assistant/releases). The installer does not modify system environment variables and does not require a separate Node.js installation.
 
-Current version: `2.2.0`.
+Current version: `2.3.0`.
+
+Starting with 2.3.0, Raid creates `RaidData/Data`, `RaidData/Runtime`, and `RaidData/Cache` on the application drive by default. On first launch it verifies migrated legacy data before cleaning the old location; runtime files are cleaned at startup and exit, and combined Chromium caches are cleared on the next launch after exceeding 128 MB. Set `RAID_DATA_ROOT` to choose another data-drive directory.
 
 ## AI configuration
 
@@ -113,7 +117,7 @@ npm run build
 npm run desktop:pack
 ```
 
-The Windows NSIS installer is written to `release-2.2.0/`. Release artifacts are ignored by Git and should be uploaded through GitHub Releases instead of committed to source history.
+The Windows NSIS installer is written to `release-2.3.0/`. Release artifacts are ignored by Git and should be uploaded through GitHub Releases instead of committed to source history.
 
 ## Privacy and security
 

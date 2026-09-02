@@ -1,6 +1,7 @@
 node_modules
 dist
 release*/
+RaidData/
 .cleanup-old-releases.ps1
 .vite/
 *.tsbuildinfo

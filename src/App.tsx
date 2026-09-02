@@ -155,6 +155,7 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
   const [conversationAttachments, setConversationAttachments] = useState<RuntimeChatAttachment[]>([])
   const [zoom, setZoom] = useState(1)
   const [currentPage, setCurrentPage] = useState(1)
+  const [pageInputDraft, setPageInputDraft] = useState<string | null>(null)
   const [areaSelectionEnabled, setAreaSelectionEnabled] = useState(false)
   const [scope, setScope] = useState<WorkArea['scope']>('general')
   const [dark, setDark] = useState(loadDarkTheme)
@@ -196,8 +197,10 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
   const showOcrProgressRef = useRef(false)
   const resultsEndRef = useRef<HTMLDivElement>(null)
   const panelScrollRef = useRef<HTMLDivElement>(null)
+  const chatFollowsLatestRef = useRef(true)
   const readerScrollRef = useRef<HTMLDivElement>(null)
   const scrollFrameRef = useRef<number | null>(null)
+  const pageJumpFrameRef = useRef<number | null>(null)
   const resizeRef = useRef<
     | { kind: 'panel'; panel: 'left' | 'right'; startX: number; startWidth: number }
     | { kind: 'dock-split'; first: PanelId; second: PanelId; startY: number; firstSize: number; secondSize: number; containerHeight: number; bottomLocks: HTMLElement[] }
@@ -244,7 +247,7 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
         setPromptHeight(nextHeight)
         window.requestAnimationFrame(() => {
           const container = panelScrollRef.current
-          if (container) container.scrollTop = container.scrollHeight
+          if (container && chatFollowsLatestRef.current) container.scrollTop = container.scrollHeight
         })
       }
       if (resize.kind === 'dock-split') {
@@ -287,7 +290,7 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
     document.body.classList.add('resizing-vertical')
     document.body.classList.add('resizing-prompt')
     const container = panelScrollRef.current
-    if (container) container.scrollTop = container.scrollHeight
+    if (container && chatFollowsLatestRef.current) container.scrollTop = container.scrollHeight
   }
 
   const startDockSplitResize = (first: PanelId, second: PanelId, event: ReactPointerEvent) => {
@@ -535,7 +538,10 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
     return () => { active = false }
   }, [])
 
-  useEffect(() => () => { workerRef.current?.terminate() }, [])
+  useEffect(() => () => {
+    workerRef.current?.terminate()
+    if (pageJumpFrameRef.current !== null) cancelAnimationFrame(pageJumpFrameRef.current)
+  }, [])
   useEffect(() => () => {
     revokeAttachmentPreviews(pendingChatAttachmentsRef.current)
     revokeAttachmentPreviews(conversationAttachmentsRef.current)
@@ -543,8 +549,18 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
 
   useEffect(() => {
     const container = panelScrollRef.current
-    if (container) container.scrollTo({ top: container.scrollHeight, behavior: history.at(-1)?.streaming ? 'auto' : 'smooth' })
+    if (container && chatFollowsLatestRef.current) container.scrollTo({ top: container.scrollHeight, behavior: history.at(-1)?.streaming ? 'auto' : 'smooth' })
   }, [history, busy])
+
+  useEffect(() => {
+    const container = panelScrollRef.current
+    if (!container) return
+    const onScroll = () => {
+      chatFollowsLatestRef.current = container.scrollHeight - container.scrollTop - container.clientHeight <= 48
+    }
+    container.addEventListener('scroll', onScroll, { passive: true })
+    return () => container.removeEventListener('scroll', onScroll)
+  })
 
   const snapshotCurrent = (): WorkArea | null => source && activeWorkAreaId ? {
     id: activeWorkAreaId,
@@ -557,6 +573,7 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
   } : null
 
   const loadWorkArea = (area: WorkArea) => {
+    chatFollowsLatestRef.current = true
     setSource(area.source); setPdf(area.pdf); setDocumentText(area.documentText); setSelectedText(area.selectedText)
     setSelections(area.selections); setConversations(area.conversations); setActiveConversationId(area.activeConversationId)
     selectionsRef.current = area.selections
@@ -945,6 +962,7 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
     setConversations(synced)
     setActiveConversationId(id)
     activeConversationIdRef.current = id
+    chatFollowsLatestRef.current = true
     setHistory(target.history)
     setError('')
     setPanelLayouts((items) => ({ ...items, chat: { ...items.chat, open: true, z: nextPanelZ(items) } }))
@@ -989,33 +1007,42 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
 
   const onPdfReady = useCallback((document: PDFDocumentProxy) => setPdf(document), [])
 
+  const queuePageJump = useCallback((pageNumber: number, expectedSourceUrl: string) => {
+    if (!Number.isFinite(pageNumber) || pageNumber < 1) return false
+    pendingPageRestoreRef.current = pageNumber
+    setCurrentPage(pageNumber)
+    if (pageJumpFrameRef.current !== null) cancelAnimationFrame(pageJumpFrameRef.current)
+    let attemptsRemaining = 20
+    const tryJump = () => {
+      pageJumpFrameRef.current = null
+      const container = readerScrollRef.current
+      const stack = container?.querySelector<HTMLElement>('.document-stack')
+      const target = container?.querySelector<HTMLElement>(`[data-page-number="${pageNumber}"]`)
+      if (!container || stack?.dataset.sourceUrl !== expectedSourceUrl || !target) {
+        attemptsRemaining -= 1
+        if (attemptsRemaining > 0) pageJumpFrameRef.current = requestAnimationFrame(tryJump)
+        return
+      }
+      const top = target.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop - 20
+      container.scrollTo({ top, behavior: 'auto' })
+      setCurrentPage(pageNumber)
+      pendingPageRestoreRef.current = null
+    }
+    pageJumpFrameRef.current = requestAnimationFrame(tryJump)
+    return true
+  }, [])
+
   useEffect(() => {
     if (source?.kind !== 'pdf' || !pdf || pendingPageRestoreRef.current === null) return
     const pageNumber = pendingPageRestoreRef.current
-    const frame = requestAnimationFrame(() => {
-      const container = readerScrollRef.current
-      const target = container?.querySelector<HTMLElement>(`[data-page-number="${pageNumber}"]`)
-      if (!container || !target) return
-      const top = target.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop - 20
-      container.scrollTo({ top })
-      setCurrentPage(pageNumber)
-      pendingPageRestoreRef.current = null
-    })
-    return () => cancelAnimationFrame(frame)
-  }, [pdf, source?.kind, source?.url])
+    queuePageJump(pageNumber, source.url)
+  }, [pdf, source?.kind, source?.url, queuePageJump])
 
   const turnPage = (direction: 1 | -1) => {
     if (!pdf) return false
     const nextPage = Math.max(1, Math.min(pdf.numPages, currentPage + direction))
     if (nextPage === currentPage) return false
-    const container = readerScrollRef.current
-    const target = container?.querySelector<HTMLElement>(`[data-page-number="${nextPage}"]`)
-    if (container && target) {
-      const top = target.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop - 20
-      container.scrollTo({ top, behavior: 'smooth' })
-    }
-    setCurrentPage(nextPage)
-    return true
+    return queuePageJump(nextPage, source?.url || '')
   }
 
   const onReaderScroll = () => {
@@ -1357,10 +1384,6 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
     setError('')
     const pendingForMessage = pendingChatAttachmentsRef.current
     const existingConversationAttachments = conversationAttachmentsRef.current
-    if ((!source || !activeWorkAreaId) && !pendingForMessage.length && !existingConversationAttachments.length) {
-      setError('请先添加项目来源，或在输入框中添加本次对话附件。')
-      return
-    }
     const workspaceId = activeWorkAreaId || (activeProjectId ? `project:${activeProjectId}` : '')
     if (!workspaceId || !activeProjectId) {
       setError('请先新建或打开一个项目。')
@@ -1392,6 +1415,10 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
     const taskKey = `${workspaceId}:${conversationId}`
     if (aiTasks.has(taskKey)) return
     const effectiveScope = requestedScope || scope
+    if (effectiveScope === 'document' && (!source || !activeWorkAreaId)) {
+      setError('当前没有可用来源。请先添加或打开一个项目来源，或切换到“自由提问”。')
+      return
+    }
     if (effectiveScope === 'selection' && !selectionReady) {
       setError('当前没有可用选区。请先选择内容，或切换到“自由提问”、“对全文”或“全部来源”。')
       return
@@ -1445,6 +1472,7 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
     conversationAttachmentsRef.current = requestAttachments
     setConversationAttachments(requestAttachments)
     const requestHistory = [...previousHistory, userMessage]
+    chatFollowsLatestRef.current = true
     setHistory(requestHistory)
     setConversations((items) => items.map((item) => item.id === conversationId ? {
       ...item,
@@ -1482,9 +1510,9 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
         fileBlob: attachment.file,
       }))).catch(() => undefined)
       let projectVectorStoreId = ''
-      let currentSourceFileId = targetIsGeneral || usingNotebookSubset ? '' : source?.openaiFileId || ''
+      let currentSourceFileId = targetIsDocument && !usingNotebookSubset ? source?.openaiFileId || '' : ''
       let context = ''
-      if (aiConfig.provider === 'openai-responses' && source && !targetIsGeneral && !usingNotebookSubset) {
+      if (aiConfig.provider === 'openai-responses' && source && targetIsDocument && !usingNotebookSubset) {
         const indexTargets = (targetIsNotebook ? notebookAreas : currentArea ? [currentArea] : []).filter((area) => area.source.kind !== 'image')
         for (let index = 0; index < indexTargets.length; index += 1) {
           const area = indexTargets[index]
@@ -1645,10 +1673,16 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
   }
 
   const jumpToPage = (page: number) => {
-    const container = readerScrollRef.current
-    const target = container?.querySelector<HTMLElement>(`[data-page-number="${page}"]`)
-    if (container && target) container.scrollTo({ top: target.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop - 20, behavior: 'smooth' })
-    setCurrentPage(page)
+    const pageNumber = Math.max(1, Math.min(pdf?.numPages || page, Math.round(page)))
+    queuePageJump(pageNumber, source?.url || '')
+  }
+
+  const commitPageInput = () => {
+    if (pageInputDraft === null) return
+    const pageNumber = Number(pageInputDraft)
+    setPageInputDraft(null)
+    if (!Number.isFinite(pageNumber) || pageNumber < 1) return
+    jumpToPage(pageNumber)
   }
 
   const jumpToSourcePage = (href: string) => {
@@ -1660,8 +1694,7 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
     if (!target) return
     if (target.id !== activeWorkAreaId) openWorkArea(target.id)
     pendingPageRestoreRef.current = page
-    setCurrentPage(page)
-    window.requestAnimationFrame(() => window.requestAnimationFrame(() => jumpToPage(page)))
+    queuePageJump(page, target.source.url)
   }
 
   const addTextToAi = (text: string) => {
@@ -1878,7 +1911,7 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
               </div>
               {source.kind === 'pdf' && <div className="page-control">
                 <button disabled={currentPage <= 1} onClick={() => turnPage(-1)} title={t('previousPage')}><ChevronLeft size={16} /></button>
-                <input aria-label="页码" type="number" min={1} max={pdf?.numPages || 1} value={currentPage} onChange={(e) => jumpToPage(Math.max(1, Math.min(pdf?.numPages || 1, Number(e.target.value))))} /><span>/ {pdf?.numPages || '…'}</span>
+                <input aria-label="页码" type="number" min={1} max={pdf?.numPages || 1} value={pageInputDraft ?? String(currentPage)} onChange={(event) => setPageInputDraft(event.target.value)} onBlur={commitPageInput} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); commitPageInput(); event.currentTarget.blur() } }} /><span>/ {pdf?.numPages || '…'}</span>
                 <button disabled={!pdf || currentPage >= pdf.numPages} onClick={() => turnPage(1)} title={t('nextPage')}><ChevronRight size={16} /></button>
               </div>}
               <div className="reader-tools">

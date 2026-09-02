@@ -4,6 +4,25 @@ All notable changes to Raid are documented here.
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-09-02
+
+### Added
+
+- Added `RaidData/Data`, `RaidData/Runtime`, and `RaidData/Cache` storage partitions so large local sources, temporary conversions, and Chromium caches follow the application drive instead of growing the Windows system drive by default.
+- Added verified one-time migration from the legacy Electron user-data directory. Persistent files are copied and SHA-256 checked before the old directory is removed; failed migrations preserve the original data and stop startup instead of opening an empty workspace.
+- Added automatic stale-runtime cleanup and startup pruning when combined Chromium caches exceed 128 MB.
+
+### Fixed
+
+- Fixed typed page numbers, previous/next controls, and source citations failing to reach the intended PDF page while a document was still rendering or after switching sources.
+- Fixed streamed answers forcing the conversation panel back to the bottom after the reader deliberately scrolled upward.
+- Fixed source-free general questions incorrectly requiring a file or chat attachment.
+- Fixed selection questions in OpenAI Responses mode indexing and searching the entire current source instead of staying within the selection scope.
+
+### Changed
+
+- Updated the application, Codex client, and Windows release output to 2.3.0 while retaining the existing application ID and original-author attribution.
+
 ## [2.2.0] - 2026-09-01
 
 ### Added

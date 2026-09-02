@@ -3,7 +3,7 @@
 [中文](README.md) | [English](README_EN.md)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-![Version](https://img.shields.io/badge/version-2.2.0-6b7cff)
+![Version](https://img.shields.io/badge/version-2.3.0-6b7cff)
 ![Platform](https://img.shields.io/badge/platform-Windows-0078d4)
 
 Raid 是一款面向论文、教材和技术文档的 PDF / 图片 AI 阅读助手。它提供连续 PDF 阅读、文字选择、跨页区域框选、OCR、全文上下文问答，以及可自行配置的 OpenAI Chat Completions 兼容模型。
@@ -14,7 +14,7 @@ Raid 是一款面向论文、教材和技术文档的 PDF / 图片 AI 阅读助�
 
 本项目是在原作者 **xyLee（GitHub：[`lxymol`](https://github.com/lxymol)）** 的 [`Reading-Assistant`](https://github.com/lxymol/Reading-Assistant) **1.0.0** 版本基础上继续改进的。感谢原作者完成最初的产品设计、PDF 阅读与选区交互、OCR、AI 问答、桌面应用框架及开源发布；这些工作构成了本项目后续开发的基础。
 
-当前 `2.2.0` 版本相较原作者的 `1.0.0` 版本，主要增加和改进了：
+当前 `2.3.0` 版本相较原作者的 `1.0.0` 版本，主要增加和改进了：
 
 - 以项目组织多份 PDF、图片和文本来源，并允许每个对话单独选择资料范围。
 - 接入 ChatGPT Plus / Codex 登录、模型选择、流式回答、深度思考和可选联网搜索。
@@ -23,6 +23,8 @@ Raid 是一款面向论文、教材和技术文档的 PDF / 图片 AI 阅读助�
 - 优化大型扫描 PDF：首次提问使用代表页视觉上下文，避免整本 OCR 长时间阻塞，并支持选区 OCR 与停止生成。
 - 增加项目级笔记、文字/墨迹批注、来源引用跳转、用户记忆及长对话压缩。
 - 改进多面板与原生浮动窗口、停靠交互、并行请求、错误隔离和 Windows 构建发布流程。
+- 将持久数据、临时文件和 Chromium 缓存分区到应用盘的 `RaidData`，首次启动校验迁移旧数据，并限制磁盘缓存以减少 C 盘增长。
+- 修复页码跳转、流式回答强制下拉，以及自由提问、当前来源、选区和项目来源之间的范围串用问题。
 
 本分支保留 MIT License 中的原作者版权声明，并追加当前维护者声明。
 
@@ -53,7 +55,9 @@ Raid 是一款面向论文、教材和技术文档的 PDF / 图片 AI 阅读助�
 
 Windows 用户可以在 [GitHub Releases](https://github.com/lewisleo753194/Reading-Assistant/releases) 下载最新安装程序。安装包不会修改系统环境变量，也不要求另行安装 Node.js。
 
-当前版本：`2.2.0`。
+当前版本：`2.3.0`。
+
+从 2.3.0 起，Raid 默认在应用所在盘创建 `RaidData/Data`、`RaidData/Runtime` 和 `RaidData/Cache`。首次启动会先校验迁移旧版用户数据，再清理旧目录；临时文件会在启动和退出时清理，Chromium 缓存总量超过 128 MB 时会在下次启动清理。可通过环境变量 `RAID_DATA_ROOT` 指定其他数据盘目录。
 
 ## AI 配置
 
@@ -119,7 +123,7 @@ npm run build
 npm run desktop:pack
 ```
 
-Windows NSIS 安装程序输出到 `release-2.2.0/`。发布产物已被 Git 忽略，请通过 GitHub Releases 上传安装包，不要把安装包直接提交到源码历史。
+Windows NSIS 安装程序输出到 `release-2.3.0/`。发布产物已被 Git 忽略，请通过 GitHub Releases 上传安装包，不要把安装包直接提交到源码历史。
 
 ## 隐私与安全
 

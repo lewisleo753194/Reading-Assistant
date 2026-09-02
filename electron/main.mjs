@@ -1,8 +1,9 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, session, shell } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { startServer } from '../server/index.mjs'
+import { cleanupDirectoryContents, createStorageLayout, migrateLegacyUserDataAsync, pruneChromiumCaches, selectWritableStorageRoot, storageRootCandidates } from './storage-manager.mjs'
 
 let localServer = null
 let mainWindow = null
@@ -14,10 +15,48 @@ const appIconPath = path.join(dirname, process.platform === 'win32' ? 'app-icon.
 const dockZoneWidth = 32
 const textFileExtensions = new Set(['.md', '.txt', '.json', '.yaml', '.yml', '.toml', '.csv', '.tsv', '.tex'])
 const isDevelopmentInstance = process.argv.includes('--development-instance')
-if (isDevelopmentInstance) app.setPath('userData', `${app.getPath('userData')}-development`)
-if (process.platform === 'win32') app.setAppUserModelId('cn.lxymol.readingassistant')
-const internalPort = isDevelopmentInstance ? 18788 : 18787
+const defaultUserData = app.getPath('userData')
+const legacyUserData = isDevelopmentInstance ? `${defaultUserData}-development` : defaultUserData
+if (isDevelopmentInstance) app.setPath('userData', legacyUserData)
+// Keep the single-instance identity on the pre-2.3 path. Besides preventing an
+// old and a new Raid process from migrating the same profile concurrently,
+// this avoids creating a second lock namespace merely because storage moved.
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
+const storageRoot = selectWritableStorageRoot(storageRootCandidates({
+  overrideRoot: process.env.RAID_DATA_ROOT || '',
+  portableExecutableDir: process.env.PORTABLE_EXECUTABLE_DIR || '',
+  isDevelopmentInstance,
+  isPackaged: app.isPackaged,
+  executablePath: process.execPath,
+  appPath: app.getAppPath(),
+  documentsPath: app.getPath('documents'),
+  legacyUserData,
+}))
+const storageLayout = createStorageLayout(storageRoot)
+const storageBootstrapLog = path.join(storageLayout.root, 'storage-bootstrap.log')
+const logStorageBootstrap = (message) => {
+  try { fs.appendFileSync(storageBootstrapLog, `${new Date().toISOString()} ${message}\n`) } catch { /* Startup must continue when diagnostics cannot be written. */ }
+}
+logStorageBootstrap(`Legacy user data: ${legacyUserData}`)
+cleanupDirectoryContents(storageLayout.runtimeDir)
+let migrationResult = { migrated: false, reason: 'not-attempted' }
+const activeUserData = storageLayout.dataDir
+app.setPath('userData', activeUserData)
+// Chromium stores persistent web data (including IndexedDB/localStorage) under
+// sessionData as well as disposable caches, so it must stay with Data. Only
+// explicitly disposable cache folders are pruned below.
+app.setPath('sessionData', activeUserData)
+app.setPath('temp', storageLayout.runtimeDir)
+app.setAppLogsPath(path.join(activeUserData, 'Logs'))
+logStorageBootstrap(`Active user data: ${activeUserData}`)
+try {
+  if (process.platform === 'win32') app.setAppUserModelId('cn.lxymol.readingassistant')
+  logStorageBootstrap('Application ID configured')
+} catch (error) {
+  logStorageBootstrap(`Application ID fallback: ${error instanceof Error ? error.message : String(error)}`)
+}
+const internalPort = isDevelopmentInstance ? 18788 : 18787
+logStorageBootstrap(`Single instance lock: ${hasSingleInstanceLock}`)
 
 function logStartup(message) {
   try {
@@ -185,7 +224,7 @@ ipcMain.on('reading-assistant:set-dock-zones', (event, payload) => {
 
 async function createWindow() {
   logStartup('Starting local service')
-  const started = await startServer(internalPort)
+  const started = await startServer(internalPort, { runtimeDirectory: storageLayout.runtimeDir })
   localServer = started.server
   logStartup(`Local service ready on ${started.port}`)
 
@@ -256,8 +295,23 @@ if (!hasSingleInstanceLock) {
     mainWindow.show()
     mainWindow.focus()
   })
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
+    logStorageBootstrap('Electron ready')
+    try {
+      migrationResult = await migrateLegacyUserDataAsync({ legacyUserData, dataDir: storageLayout.dataDir, allowExisting: true })
+      logStorageBootstrap(`Migration result: ${JSON.stringify(migrationResult)}`)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      logStorageBootstrap(`Migration failed: ${message}`)
+      dialog.showErrorBox('Raid 数据迁移失败', `旧数据仍安全保存在：\n${legacyUserData}\n\n${message}\n\n请关闭其他 Raid 实例后重试。`)
+      throw error
+    }
+    const cachePruneResult = pruneChromiumCaches(activeUserData, storageLayout.cacheDir)
+    session.defaultSession.setCodeCachePath(path.join(storageLayout.cacheDir, 'Code'))
     logStartup('Electron ready')
+    logStartup(`Storage root: ${storageLayout.root}`)
+    logStartup(`Legacy migration: ${JSON.stringify(migrationResult)}`)
+    if (cachePruneResult.cleared) logStartup(`Cache pruned after exceeding 128 MB: ${cachePruneResult.previousBytes} bytes`)
     return createWindow()
   }).catch((error) => {
     logStartup(`Startup failed: ${error instanceof Error ? error.stack || error.message : String(error)}`)
@@ -278,4 +332,8 @@ app.on('before-quit', () => {
   setDockZones(false)
   localServer?.close()
   localServer = null
+})
+
+app.on('will-quit', () => {
+  cleanupDirectoryContents(storageLayout.runtimeDir)
 })

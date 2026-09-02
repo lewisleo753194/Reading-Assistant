@@ -409,7 +409,7 @@ export default function DocumentViewer({ source, zoom, currentPage, inverted, ar
   </div> : null
 
   return (
-    <div className={`document-stack ${annotationMode ? 'annotation-mode' : areaSelectionEnabled ? 'continuous-selection' : 'text-selection-mode'}`} ref={stackRef} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={() => areaSelectionEnabled && !annotationMode && finishSelection()}>
+    <div className={`document-stack ${annotationMode ? 'annotation-mode' : areaSelectionEnabled ? 'continuous-selection' : 'text-selection-mode'}`} data-source-url={source.url} ref={stackRef} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={() => areaSelectionEnabled && !annotationMode && finishSelection()}>
       {source.kind === 'image'
         ? <ImagePage source={source} zoom={zoom} inverted={inverted} annotationMode={annotationMode} annotationTool={annotationTool} annotationColor={annotationColor} annotations={annotations} onAnnotationsChange={onAnnotationsChange} />
         : pdf && Array.from({ length: pdf.numPages }, (_, index) => {

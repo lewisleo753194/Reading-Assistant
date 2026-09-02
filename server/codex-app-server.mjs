@@ -5,7 +5,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
-const CLIENT_INFO = { name: 'raid-reading-assistant', title: 'Raid Reading Assistant', version: '2.2.0' }
+const CLIENT_INFO = { name: 'raid-reading-assistant', title: 'Raid Reading Assistant', version: '2.3.0' }
 const DEFAULT_TIMEOUT = 30_000
 const TURN_TIMEOUT = 10 * 60_000
 
@@ -35,9 +35,9 @@ function finalAgentMessage(params, completedMessages) {
   return String(final?.text || '').trim()
 }
 
-async function materializeImages(dataUrls) {
+async function materializeImages(dataUrls, runtimeDirectory = os.tmpdir()) {
   if (!Array.isArray(dataUrls) || !dataUrls.length) return { directory: '', inputs: [] }
-  const directory = await mkdtemp(path.join(os.tmpdir(), 'raid-codex-images-'))
+  const directory = await mkdtemp(path.join(runtimeDirectory, 'raid-codex-images-'))
   const inputs = []
   try {
     for (const [index, value] of dataUrls.entries()) {
@@ -56,11 +56,12 @@ async function materializeImages(dataUrls) {
 }
 
 export class CodexAppServer extends EventEmitter {
-  constructor({ spawnImpl = spawn, platform = process.platform, requestTimeout = DEFAULT_TIMEOUT } = {}) {
+  constructor({ spawnImpl = spawn, platform = process.platform, requestTimeout = DEFAULT_TIMEOUT, runtimeDirectory = os.tmpdir() } = {}) {
     super()
     this.spawnImpl = spawnImpl
     this.platform = platform
     this.requestTimeout = requestTimeout
+    this.runtimeDirectory = runtimeDirectory
     this.child = null
     this.starting = null
     this.nextId = 1
@@ -87,7 +88,7 @@ export class CodexAppServer extends EventEmitter {
     let child
     try {
       child = this.spawnImpl(command, args, {
-        cwd: os.tmpdir(),
+        cwd: this.runtimeDirectory,
         env: process.env,
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,
@@ -227,7 +228,7 @@ export class CodexAppServer extends EventEmitter {
     if (!account?.account) throw new Error('Codex 尚未登录。请在 AI 设置中选择“ChatGPT Plus / Codex”并完成登录。')
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
 
-    const localImages = await materializeImages(images)
+    const localImages = await materializeImages(images, this.runtimeDirectory)
     let threadId = ''
     let turnId = ''
     let turnTimer
@@ -262,7 +263,7 @@ export class CodexAppServer extends EventEmitter {
         config: webSearch
           ? { web_search: 'live', tools: { web_search: { context_size: 'medium' } } }
           : { web_search: 'disabled' },
-        cwd: os.tmpdir(),
+        cwd: this.runtimeDirectory,
         approvalPolicy: 'never',
         sandbox: 'read-only',
         serviceName: 'raid-reading-assistant',
@@ -302,6 +303,10 @@ export class CodexAppServer extends EventEmitter {
     this.child.stdin?.end()
     const child = this.child
     setTimeout(() => { if (!child.killed) child.kill() }, 1000).unref()
+  }
+
+  setRuntimeDirectory(directory) {
+    if (directory) this.runtimeDirectory = directory
   }
 }
 

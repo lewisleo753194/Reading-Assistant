@@ -753,7 +753,8 @@ if (fs.existsSync(dist)) {
   })
 }
 
-export function startServer(port = defaultPort) {
+export function startServer(port = defaultPort, { runtimeDirectory = '' } = {}) {
+  if (runtimeDirectory) codexAppServer.setRuntimeDirectory(runtimeDirectory)
   return new Promise((resolve, reject) => {
     const server = app.listen(port, '127.0.0.1', () => {
       const address = server.address()
