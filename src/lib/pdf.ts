@@ -1,10 +1,22 @@
 import { GlobalWorkerOptions, Util, getDocument, type PDFDocumentProxy } from 'pdfjs-dist'
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
+import jbig2WasmUrl from 'pdfjs-dist/wasm/jbig2.wasm?url'
+import openjpegWasmUrl from 'pdfjs-dist/wasm/openjpeg.wasm?url'
+import qcmsWasmUrl from 'pdfjs-dist/wasm/qcms_bg.wasm?url'
+import quickjsWasmUrl from 'pdfjs-dist/wasm/quickjs-eval.wasm?url'
 
 GlobalWorkerOptions.workerSrc = workerUrl
 
+const pdfWasmUrls = [jbig2WasmUrl, openjpegWasmUrl, qcmsWasmUrl, quickjsWasmUrl]
+const absolutePdfWasmUrls = pdfWasmUrls.map((url) => new URL(url, window.location.href))
+const pdfWasmUrl = new URL('.', absolutePdfWasmUrls[0]).href
+
+if (!absolutePdfWasmUrls.every((url) => new URL('.', url).href === pdfWasmUrl)) {
+  throw new Error('PDF 解码资源未打包到同一目录。')
+}
+
 export async function loadPdf(url: string): Promise<PDFDocumentProxy> {
-  return getDocument({ url }).promise
+  return getDocument({ url, wasmUrl: pdfWasmUrl }).promise
 }
 
 export async function extractPdfText(pdf: PDFDocumentProxy, onProgress?: (done: number, total: number) => void, maximumCharacters = Number.POSITIVE_INFINITY, signal?: AbortSignal) {
@@ -25,6 +37,36 @@ export async function extractPdfText(pdf: PDFDocumentProxy, onProgress?: (done: 
     if (characters >= maximumCharacters) break
   }
   return pages.join('\n\n')
+}
+
+export function parsePdfPageText(text: string) {
+  const pages = new Map<number, string>()
+  const pattern = /\[第 (\d+) 页\]\n([\s\S]*?)(?=\n\n\[第 \d+ 页\]\n|$)/g
+  for (const match of text.matchAll(pattern)) pages.set(Number(match[1]), match[2].trim())
+  return pages
+}
+
+export function buildPdfPageText(pages: Map<number, string>, totalPages?: number) {
+  const pageNumbers = totalPages
+    ? Array.from({ length: totalPages }, (_, index) => index + 1)
+    : [...pages.keys()].sort((a, b) => a - b)
+  return pageNumbers.map((pageNumber) => `[第 ${pageNumber} 页]\n${pages.get(pageNumber) || ''}`).join('\n\n')
+}
+
+export async function renderPdfPageForOcr(pdf: PDFDocumentProxy, pageNumber: number, scale = 1.5) {
+  const page = await pdf.getPage(pageNumber)
+  try {
+    const viewport = page.getViewport({ scale })
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.ceil(viewport.width)
+    canvas.height = Math.ceil(viewport.height)
+    const context = canvas.getContext('2d')
+    if (!context) throw new Error('无法创建 PDF OCR 页面画布。')
+    await page.render({ canvasContext: context, viewport, canvas }).promise
+    return canvas
+  } finally {
+    page.cleanup()
+  }
 }
 
 export async function extractPdfRegionText(

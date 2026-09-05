@@ -39,6 +39,8 @@ export default function SelectableCanvas({ pageNumber, className = '', render, o
         const context = canvas.getContext('2d')
         if (!context) throw new Error('无法创建页面画布')
         context.drawImage(buffer, 0, 0)
+        buffer.width = 0
+        buffer.height = 0
         hasContentRef.current = true
       })
       .catch((reason) => active && setRenderError(reason instanceof Error ? reason.message : '页面渲染失败'))

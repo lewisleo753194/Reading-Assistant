@@ -378,6 +378,44 @@ app.post('/api/openai/vector-stores', async (req, res) => {
   }
 })
 
+async function deleteOpenAiResource(baseUrl, apiKey, resourcePath, label) {
+  const response = await fetch(`${baseUrl}${resourcePath}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${apiKey}` },
+    signal: AbortSignal.timeout(30000),
+  })
+  const data = await response.json().catch(() => ({}))
+  // Deletion is intentionally idempotent so a partially completed project
+  // cleanup can be retried without leaving its local data stranded.
+  if (response.status === 404) return { deleted: true, alreadyMissing: true }
+  if (!response.ok || data?.deleted === false) throw new Error(data?.error?.message || `${label}失败（${response.status}）`)
+  return { deleted: true, alreadyMissing: false }
+}
+
+app.post('/api/openai/files/delete', async (req, res) => {
+  try {
+    if (!isResponsesMode(req.body)) throw new Error('请先切换到建立该索引时使用的 OpenAI Responses API 配置。')
+    const { apiKey, baseUrl } = resolveAiEndpoint(req.body)
+    const fileId = String(req.body?.fileId || '').trim()
+    if (!fileId) throw new Error('缺少远端文件标识')
+    res.json(await deleteOpenAiResource(baseUrl, apiKey, `/files/${encodeURIComponent(fileId)}`, '删除 OpenAI 文件'))
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : '删除 OpenAI 文件失败' })
+  }
+})
+
+app.post('/api/openai/vector-stores/delete', async (req, res) => {
+  try {
+    if (!isResponsesMode(req.body)) throw new Error('请先切换到建立该索引时使用的 OpenAI Responses API 配置。')
+    const { apiKey, baseUrl } = resolveAiEndpoint(req.body)
+    const vectorStoreId = String(req.body?.vectorStoreId || '').trim()
+    if (!vectorStoreId) throw new Error('缺少远端项目索引标识')
+    res.json(await deleteOpenAiResource(baseUrl, apiKey, `/vector_stores/${encodeURIComponent(vectorStoreId)}`, '删除 OpenAI 项目索引'))
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : '删除 OpenAI 项目索引失败' })
+  }
+})
+
 app.post('/api/openai/files', express.raw({ type: 'application/octet-stream', limit: '512mb' }), async (req, res) => {
   try {
     const apiKey = String(req.get('x-raid-api-key') || process.env.OPENAI_API_KEY || '').trim()

@@ -9,6 +9,20 @@ export type SourceFile = {
   indexStatus?: 'local' | 'uploading' | 'ready' | 'error'
 }
 
+export type OcrWord = {
+  text: string
+  left: number
+  top: number
+  width: number
+  height: number
+}
+
+export type OcrPage = {
+  page: number
+  text: string
+  words: OcrWord[]
+}
+
 export type SelectionResult = {
   image: string
   images: string[]
@@ -49,6 +63,8 @@ export type ChatAttachmentSummary = {
   name: string
   kind: ChatAttachmentKind
   size: number
+  origin?: 'upload' | 'selection'
+  page?: number
 }
 
 export type AiConfig = {
@@ -156,6 +172,8 @@ export type WorkArea = {
   source: SourceFile
   pdf: PDFDocumentProxy | null
   documentText: string
+  documentProcessingComplete: boolean
+  ocrPages: Record<string, OcrPage>
   selectedText: string
   selections: CapturedSelection[]
   conversations: Conversation[]

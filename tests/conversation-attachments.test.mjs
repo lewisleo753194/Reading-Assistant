@@ -15,6 +15,12 @@ test('chat attachments stay in the conversation instead of becoming project sour
   assert.match(appSource, /chatImageToDataUrl\(/)
   assert.match(memorySource, /conversation-attachments/)
   assert.match(memorySource, /createIndex\('conversationId'/)
+  assert.match(appSource, /runtimeAttachment\?\.previewUrl/)
+  assert.match(appSource, /className="history-image-open"/)
+  assert.match(appSource, /className="image-preview-dialog"/)
+  assert.match(appSource, /jumpToHistoryPage/)
+  assert.match(appSource, /reusableConversationAttachments/)
+  assert.match(memorySource, /origin\?: 'upload' \| 'selection'/)
 })
 
 test('chat can open for an empty project and the server accepts attachment-only requests', () => {

@@ -1,4 +1,4 @@
-import type { ChatAttachmentKind, Conversation, DocumentAnnotation, DocumentHighlight, StudyProject } from '../types'
+import type { ChatAttachmentKind, Conversation, DocumentAnnotation, DocumentHighlight, OcrPage, StudyProject } from '../types'
 
 export type StoredConversation = Conversation
 
@@ -19,6 +19,8 @@ export type FileMemoryRecord = {
   fileBlob?: Blob
   documentText?: string
   documentTextVersion?: number
+  documentProcessingComplete?: boolean
+  ocrPages?: Record<string, OcrPage>
   note?: string
   noteAssets?: Record<string, string>
   highlights?: DocumentHighlight[]
@@ -49,6 +51,8 @@ export type ConversationAttachmentRecord = {
   createdAt: number
   fileBlob: Blob
   preparedText?: string
+  origin?: 'upload' | 'selection'
+  page?: number
 }
 
 function openDatabase() {

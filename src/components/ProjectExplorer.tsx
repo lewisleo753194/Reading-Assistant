@@ -1,4 +1,5 @@
 import { ChevronDown, ChevronRight, FileImage, FileText, FolderPlus, MessageSquareText, Pencil, Plus, Trash2, X } from 'lucide-react'
+import { useState } from 'react'
 
 type Source = { id: string; name: string; kind: 'pdf' | 'image' | 'text'; busy: boolean; selected: boolean; indexStatus?: 'local' | 'uploading' | 'ready' | 'error' }
 type Project = { id: string; name: string; sources: Source[]; conversations: Array<{ id: string; title: string }>; activeConversationId: string }
@@ -23,6 +24,26 @@ type Props = {
 }
 
 export default function ProjectExplorer({ projects, activeProjectId, activeSourceId, onCreateProject, onOpenProject, onRenameProject, onDeleteProject, onOpenSource, onDeleteSource, onToggleSource, onSelectAllSources, onSelectCurrentSource, onAddSources, onCreateConversation, onOpenConversation, onDeleteConversation }: Props) {
+  const [collapsedProjectIds, setCollapsedProjectIds] = useState<string[]>(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('reading-assistant-collapsed-projects') || '[]')
+      return Array.isArray(saved) ? saved.filter((id): id is string => typeof id === 'string') : []
+    } catch {
+      return []
+    }
+  })
+
+  const openOrToggleProject = (projectId: string, active: boolean, expanded: boolean) => {
+    setCollapsedProjectIds((items) => {
+      const next = active && expanded
+        ? [...new Set([...items, projectId])]
+        : items.filter((id) => id !== projectId)
+      localStorage.setItem('reading-assistant-collapsed-projects', JSON.stringify(next))
+      return next
+    })
+    if (!active) onOpenProject(projectId)
+  }
+
   const pickSources = (projectId: string, input: HTMLInputElement) => {
     const files = Array.from(input.files || [])
     if (files.length) onAddSources(projectId, files)
@@ -34,16 +55,17 @@ export default function ProjectExplorer({ projects, activeProjectId, activeSourc
     {projects.length === 0 && <div className="notebook-empty"><FolderPlus size={24} /><p>新建一个学习项目，然后加入教材和资料。</p><button type="button" onClick={onCreateProject}>新建项目</button></div>}
     {projects.map((project) => {
       const active = project.id === activeProjectId
+      const expanded = active && !collapsedProjectIds.includes(project.id)
       return <section className={`notebook-project ${active ? 'active' : ''}`} key={project.id}>
         <div className="notebook-project-row">
-          <button type="button" className="notebook-project-main" onClick={() => onOpenProject(project.id)}>{active ? <ChevronDown size={14} /> : <ChevronRight size={14} />}<strong>{project.name}</strong><small>{project.sources.length}</small></button>
+          <button type="button" className="notebook-project-main" aria-expanded={expanded} title={expanded ? `折叠 ${project.name}` : `展开 ${project.name}`} onClick={() => openOrToggleProject(project.id, active, expanded)}>{expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}<strong>{project.name}</strong><small>{project.sources.length}</small></button>
           <div className="notebook-project-actions">
             <label title="添加来源"><Plus size={13} /><input hidden multiple type="file" accept="application/pdf,image/*,.txt,.md,.markdown,.csv,.json,.html,.xml" onChange={(event) => pickSources(project.id, event.target)} /></label>
             <button type="button" onClick={() => onRenameProject(project.id)} title={`重命名 ${project.name}`} aria-label="重命名项目"><Pencil size={12} /></button>
             <button type="button" onClick={() => onDeleteProject(project.id)} title={`删除 ${project.name}`} aria-label="删除项目"><Trash2 size={12} /></button>
           </div>
         </div>
-        {active && <><div className="notebook-source-heading"><span>用于项目问答 · {project.sources.filter((source) => source.selected).length}/{project.sources.length}</span><div><button type="button" onClick={onSelectAllSources} disabled={project.sources.length === 0}>全选</button><button type="button" onClick={onSelectCurrentSource} disabled={!activeSourceId}>仅当前</button></div></div><div className="notebook-source-list">{project.sources.length === 0
+        {expanded && <><div className="notebook-source-heading"><span>用于项目问答 · {project.sources.filter((source) => source.selected).length}/{project.sources.length}</span><div><button type="button" onClick={onSelectAllSources} disabled={project.sources.length === 0}>全选</button><button type="button" onClick={onSelectCurrentSource} disabled={!activeSourceId}>仅当前</button></div></div><div className="notebook-source-list">{project.sources.length === 0
           ? <label className="notebook-add-first"><Plus size={14} />添加第一份来源<input hidden multiple type="file" accept="application/pdf,image/*,.txt,.md,.markdown,.csv,.json,.html,.xml" onChange={(event) => pickSources(project.id, event.target)} /></label>
           : project.sources.map((source) => <div key={source.id} className={`notebook-source-row ${source.id === activeSourceId ? 'active' : ''}`}>
               <label className="notebook-source-check" title={source.selected ? `项目问答会使用 ${source.name}` : `项目问答不会使用 ${source.name}`}><input type="checkbox" checked={source.selected} onChange={(event) => onToggleSource(source.id, event.target.checked)} /><span /></label>

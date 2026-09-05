@@ -28,11 +28,19 @@ function packagedStorageBase(executablePath) {
   return executableFolder
 }
 
+function portableStorageBase(portableExecutableDir) {
+  const executableFolder = path.resolve(portableExecutableDir)
+  // Build artifacts live in versioned release folders. Keeping RaidData inside
+  // those folders makes every upgrade look like a fresh installation.
+  if (/^release-\d/i.test(path.basename(executableFolder))) return path.dirname(executableFolder)
+  return executableFolder
+}
+
 export function storageRootCandidates({ overrideRoot = '', portableExecutableDir = '', isDevelopmentInstance = false, isPackaged = true, executablePath, appPath, documentsPath, legacyUserData }) {
   const candidates = []
   if (overrideRoot.trim()) candidates.push(path.resolve(overrideRoot.trim()))
   if (isDevelopmentInstance) candidates.push(path.join(appPath, 'RaidData', 'Development'))
-  else if (portableExecutableDir.trim()) candidates.push(path.join(path.resolve(portableExecutableDir), 'RaidData'))
+  else if (portableExecutableDir.trim()) candidates.push(path.join(portableStorageBase(portableExecutableDir.trim()), 'RaidData'))
   else if (isPackaged) candidates.push(path.join(packagedStorageBase(executablePath), 'RaidData'))
   else candidates.push(path.join(appPath, 'RaidData'))
   candidates.push(path.join(documentsPath, 'RaidData'))

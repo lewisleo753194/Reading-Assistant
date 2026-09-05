@@ -4,6 +4,45 @@ All notable changes to Raid are documented here.
 
 ## [Unreleased]
 
+## [2.4.2] - 2026-09-05
+
+### Added
+
+- Added resumable full-document OCR for scanned PDFs, including selectable OCR text and per-page progress caching.
+- Added packaged PDF.js decoders for JBIG2, JPEG 2000, color-management, and QuickJS-backed PDF content.
+- Added complete OpenAI Responses cleanup: deleting a source removes its uploaded file, while deleting a project removes its files and vector store before local data is cleared.
+
+### Improved
+
+- Conversation images and saved selection screenshots can now be clicked to open a large preview without leaving the current conversation.
+- Selection page links and preview page actions now switch to the correct source before jumping, wait longer for large documents to render, and prevent the previous scroll position from overwriting the requested page.
+- Deleting a single conversation turn or an entire conversation now requires confirmation, reducing accidental data loss.
+- PDF documents, OCR workers, and temporary canvases are released when no longer needed, reducing memory growth during long reading sessions.
+- Active projects can now be collapsed independently of project selection, and their collapsed state is restored on the next launch.
+
+### Fixed
+
+- Fixed valid JBIG2 PDFs opening with a decoder-initialization error in packaged builds.
+- Fixed deleted OpenAI-indexed sources and projects leaving remote files or vector stores behind.
+- Fixed the active project remaining permanently expanded in the project explorer.
+
+## [2.4.1] - 2026-09-04
+
+### Fixed
+
+- Area selections are now sent only as the captured image. Raid no longer OCRs the crop or promotes overlapping annotation text into a competing text prompt.
+- Removed the editable recognized-text box from the selection panel, preventing annotation-only text from overriding the visual selection.
+- Versioned portable release folders now share the stable parent `RaidData` directory, so replacing or upgrading the portable executable no longer opens an empty project database.
+
+### Added
+
+- Selection images are stored with the user message that sent them and remain visible after switching conversations or restarting Raid.
+- Referenced images now appear as thumbnails in conversation history, while referenced PDFs and text files remain as persistent file cards.
+
+### Changed
+
+- Updated the application and Windows portable release output to 2.4.1 while retaining the existing application ID and local data location.
+
 ## [2.3.0] - 2026-09-02
 
 ### Added

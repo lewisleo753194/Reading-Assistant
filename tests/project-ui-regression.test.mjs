@@ -11,6 +11,17 @@ test('project create, rename and delete use an in-app dialog', async () => {
   assert.match(app, /mode: 'delete'/)
 })
 
+test('message turns and whole conversations require deletion confirmation', async () => {
+  const app = await readFile(new URL('../src/App.tsx', import.meta.url), 'utf8')
+
+  assert.match(app, /DeleteConfirmationState/)
+  assert.match(app, /kind: 'message'/)
+  assert.match(app, /kind: 'conversation'/)
+  assert.match(app, /删除这轮对话？/)
+  assert.match(app, /删除整个对话？/)
+  assert.match(app, /onClick=\{confirmDeletion\}/)
+})
+
 test('project action controls are explicit buttons', async () => {
   const explorer = await readFile(new URL('../src/components/ProjectExplorer.tsx', import.meta.url), 'utf8')
   const styles = await readFile(new URL('../src/styles.css', import.meta.url), 'utf8')
@@ -18,6 +29,17 @@ test('project action controls are explicit buttons', async () => {
   assert.match(explorer, /<button type="button"[\s\S]{0,220}aria-label="重命名项目"/)
   assert.match(explorer, /<button type="button"[\s\S]{0,220}aria-label="删除项目"/)
   assert.match(styles, /\.notebook-project-actions\s*\{[^}]*opacity:\.72/)
+})
+
+test('the active project can be collapsed independently from project selection', async () => {
+  const explorer = await readFile(new URL('../src/components/ProjectExplorer.tsx', import.meta.url), 'utf8')
+
+  assert.match(explorer, /collapsedProjectIds/)
+  assert.match(explorer, /reading-assistant-collapsed-projects/)
+  assert.match(explorer, /const expanded = active && !collapsedProjectIds\.includes\(project\.id\)/)
+  assert.match(explorer, /aria-expanded=\{expanded\}/)
+  assert.match(explorer, /openOrToggleProject\(project\.id, active, expanded\)/)
+  assert.match(explorer, /\{expanded && <>/)
 })
 
 test('each project source has its own delete action and confirmation', async () => {
@@ -32,6 +54,20 @@ test('each project source has its own delete action and confirmation', async () 
   assert.match(app, /removeSourceFromProject/)
   assert.match(app, /只从当前项目删除/)
   assert.match(styles, /\.notebook-source-delete\s*\{/)
+})
+
+test('source and project deletion clean remote indexes before local records', async () => {
+  const app = await readFile(new URL('../src/App.tsx', import.meta.url), 'utf8')
+  const server = await readFile(new URL('../server/index.mjs', import.meta.url), 'utf8')
+
+  assert.match(app, /await deleteRemoteOpenAiFile\(target\.source\.openaiFileId\)/)
+  assert.match(app, /for \(const fileId of remoteFileIds\) await deleteRemoteOpenAiFile\(fileId\)/)
+  assert.match(app, /if \(vectorStoreId\) await deleteRemoteVectorStore\(vectorStoreId\)/)
+  assert.match(app, /远端项目数据清理失败，本地项目尚未删除/)
+  assert.doesNotMatch(app, /shouldResetProjectIndex/)
+  assert.match(server, /app\.post\('\/api\/openai\/files\/delete'/)
+  assert.match(server, /app\.post\('\/api\/openai\/vector-stores\/delete'/)
+  assert.match(server, /if \(response\.status === 404\) return \{ deleted: true, alreadyMissing: true \}/)
 })
 
 test('each conversation keeps an explicit project-source subset and shows the effective context', async () => {

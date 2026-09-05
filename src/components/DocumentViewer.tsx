@@ -8,7 +8,7 @@ import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
 import SelectableCanvas from './SelectableCanvas'
 import AnnotationLayer from './AnnotationLayer'
-import type { AnnotationTool, DocumentAnnotation, DocumentHighlight, SelectionResult, SourceFile, TextAnnotation } from '../types'
+import type { AnnotationTool, DocumentAnnotation, DocumentHighlight, OcrPage, SelectionResult, SourceFile, TextAnnotation } from '../types'
 import { loadPdf } from '../lib/pdf'
 import { useI18n } from '../i18n'
 
@@ -22,6 +22,8 @@ type Props = {
   onSelect: (selection: SelectionResult) => void
   onTextAi: (text: string) => void
   onTextTranslate: (text: string, signal: AbortSignal) => Promise<string>
+  ocrPages: Record<string, OcrPage>
+  onNeedOcrPage: (pageNumber: number) => void
   highlights: DocumentHighlight[]
   onHighlight: (highlight: Omit<DocumentHighlight, 'id'>) => void
   annotationMode: boolean
@@ -33,20 +35,24 @@ type Props = {
 
 type AnnotationPageProps = Pick<Props, 'annotationMode' | 'annotationTool' | 'annotationColor' | 'annotations' | 'onAnnotationsChange'>
 
-function PdfPage({ pdf, pageNumber, zoom, inverted, textSelectionEnabled, highlights, ...annotationProps }: { pdf: PDFDocumentProxy; pageNumber: number; zoom: number; inverted: boolean; textSelectionEnabled: boolean; highlights: DocumentHighlight[] } & AnnotationPageProps) {
+function PdfPage({ pdf, pageNumber, zoom, inverted, textSelectionEnabled, highlights, ocrPage, onNeedOcrPage, ...annotationProps }: { pdf: PDFDocumentProxy; pageNumber: number; zoom: number; inverted: boolean; textSelectionEnabled: boolean; highlights: DocumentHighlight[]; ocrPage?: OcrPage; onNeedOcrPage: (pageNumber: number) => void } & AnnotationPageProps) {
   const textLayerRef = useRef<HTMLDivElement>(null)
   const render = useCallback(async (canvas: HTMLCanvasElement) => {
     const page = await pdf.getPage(pageNumber)
-    const displayViewport = page.getViewport({ scale: 0.82 * zoom })
-    const outputScale = Math.min(window.devicePixelRatio || 1, 1.6)
-    const viewport = page.getViewport({ scale: 0.82 * zoom * outputScale })
-    const context = canvas.getContext('2d')
-    if (!context) return
-    canvas.width = viewport.width
-    canvas.height = viewport.height
-    canvas.style.width = `${displayViewport.width}px`
-    canvas.style.height = `${displayViewport.height}px`
-    await page.render({ canvasContext: context, viewport, canvas }).promise
+    try {
+      const displayViewport = page.getViewport({ scale: 0.82 * zoom })
+      const outputScale = Math.min(window.devicePixelRatio || 1, 1.6)
+      const viewport = page.getViewport({ scale: 0.82 * zoom * outputScale })
+      const context = canvas.getContext('2d')
+      if (!context) return
+      canvas.width = viewport.width
+      canvas.height = viewport.height
+      canvas.style.width = `${displayViewport.width}px`
+      canvas.style.height = `${displayViewport.height}px`
+      await page.render({ canvasContext: context, viewport, canvas }).promise
+    } finally {
+      page.cleanup()
+    }
   }, [pdf, pageNumber, zoom])
 
   useEffect(() => {
@@ -59,11 +65,30 @@ function PdfPage({ pdf, pageNumber, zoom, inverted, textSelectionEnabled, highli
     void pdf.getPage(pageNumber).then(async (page) => {
       if (!active) return
       const viewport = page.getViewport({ scale: 0.82 * zoom })
+      const textContent = await page.getTextContent()
       container.style.setProperty('--total-scale-factor', String(0.82 * zoom))
       container.style.setProperty('--scale-round-x', '1px')
       container.style.setProperty('--scale-round-y', '1px')
-      layer = new TextLayer({ textContentSource: await page.getTextContent(), container, viewport })
-      await layer.render()
+      const hasNativeText = textContent.items.some((item) => 'str' in item && item.str.trim())
+      if (hasNativeText) {
+        layer = new TextLayer({ textContentSource: textContent, container, viewport })
+        await layer.render()
+      } else if (ocrPage) {
+        const words = ocrPage.words.length ? ocrPage.words : [{ text: ocrPage.text, left: 0, top: 0, width: 1, height: 1 }]
+        words.filter((word) => word.text.trim()).forEach((word) => {
+          const span = document.createElement('span')
+          span.className = 'ocr-word'
+          span.textContent = word.text
+          span.style.left = `${word.left * 100}%`
+          span.style.top = `${word.top * 100}%`
+          span.style.width = `${word.width * 100}%`
+          span.style.height = `${word.height * 100}%`
+          span.style.fontSize = `${Math.max(8, word.height * viewport.height)}px`
+          container.append(span)
+        })
+      } else {
+        onNeedOcrPage(pageNumber)
+      }
       const legacyHighlights = highlights.filter((item) => item.page === pageNumber && !item.regions?.length)
       container.querySelectorAll('span').forEach((span) => {
         const spanText = span.textContent?.trim() || ''
@@ -71,7 +96,7 @@ function PdfPage({ pdf, pageNumber, zoom, inverted, textSelectionEnabled, highli
       })
     }).catch(() => undefined)
     return () => { active = false; layer?.cancel(); container.replaceChildren() }
-  }, [pdf, pageNumber, textSelectionEnabled, zoom, highlights])
+  }, [pdf, pageNumber, textSelectionEnabled, zoom, highlights, ocrPage, onNeedOcrPage])
 
   const pageRegions = highlights.flatMap((highlight) => (highlight.regions || []).filter((item) => item.page === pageNumber).map((item) => ({ ...item.region, color: highlight.color })))
   return <SelectableCanvas pageNumber={pageNumber} render={render} onSelect={() => undefined} selectionEnabled={false} inverted={inverted} overlay={<><div className="saved-highlight-layer">{pageRegions.map((region, index) => <i key={index} style={{ left: `${region.left * 100}%`, top: `${region.top * 100}%`, width: `${region.width * 100}%`, height: `${region.height * 100}%`, background: region.color }} />)}</div><div ref={textLayerRef} className={`text-layer ${textSelectionEnabled ? 'enabled' : ''}`} /><AnnotationLayer pageNumber={pageNumber} active={annotationProps.annotationMode} tool={annotationProps.annotationTool} color={annotationProps.annotationColor} annotations={annotationProps.annotations} onChange={annotationProps.onAnnotationsChange} /></>} />
@@ -120,7 +145,7 @@ function drawAnnotationsIntoCrop(context: CanvasRenderingContext2D, pageAnnotati
   context.restore()
 }
 
-export default function DocumentViewer({ source, zoom, currentPage, inverted, areaSelectionEnabled, onPdfReady, onSelect, onTextAi, onTextTranslate, highlights, onHighlight, annotationMode, annotationTool, annotationColor, annotations, onAnnotationsChange }: Props) {
+export default function DocumentViewer({ source, zoom, currentPage, inverted, areaSelectionEnabled, onPdfReady, onSelect, onTextAi, onTextTranslate, ocrPages, onNeedOcrPage, highlights, onHighlight, annotationMode, annotationTool, annotationColor, annotations, onAnnotationsChange }: Props) {
   const { t, pack } = useI18n()
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null)
   const [error, setError] = useState('')
@@ -136,13 +161,26 @@ export default function DocumentViewer({ source, zoom, currentPage, inverted, ar
   const [copied, setCopied] = useState(false)
   const dragRef = useRef<{ pointerId: number; x: number; y: number; left: number; top: number } | null>(null)
   const translationControllerRef = useRef<AbortController | null>(null)
-  const renderRadius = zoom > 1.8 ? 1 : zoom > 1.2 ? 2 : 3
+  const renderRadius = zoom > 1.2 ? 1 : 2
 
   useEffect(() => {
     if (source.kind !== 'pdf') return
-    loadPdf(source.url)
-      .then((document) => { setPdf(document); onPdfReady(document) })
-      .catch((reason) => setError(reason instanceof Error ? reason.message : (pack.code === 'en-US' ? 'Failed to load PDF' : 'PDF 加载失败')))
+    let active = true
+    let document: PDFDocumentProxy | null = null
+    void loadPdf(source.url)
+      .then((loadedDocument) => {
+        document = loadedDocument
+        if (!active) return loadedDocument.loadingTask.destroy()
+        setPdf(loadedDocument)
+        onPdfReady(loadedDocument)
+      })
+      .catch((reason) => {
+        if (active) setError(reason instanceof Error ? reason.message : (pack.code === 'en-US' ? 'Failed to load PDF' : 'PDF 加载失败'))
+      })
+    return () => {
+      active = false
+      if (document) void document.loadingTask.destroy().catch(() => undefined)
+    }
   }, [source, onPdfReady, pack.code])
 
   useEffect(() => {
@@ -415,7 +453,7 @@ export default function DocumentViewer({ source, zoom, currentPage, inverted, ar
         : pdf && Array.from({ length: pdf.numPages }, (_, index) => {
           const pageNumber = index + 1
           return Math.abs(pageNumber - currentPage) <= renderRadius
-            ? <PdfPage key={pageNumber} pdf={pdf} pageNumber={pageNumber} zoom={zoom} inverted={inverted} textSelectionEnabled={!areaSelectionEnabled && !annotationMode} highlights={highlights} annotationMode={annotationMode} annotationTool={annotationTool} annotationColor={annotationColor} annotations={annotations} onAnnotationsChange={onAnnotationsChange} />
+            ? <PdfPage key={pageNumber} pdf={pdf} pageNumber={pageNumber} zoom={zoom} inverted={inverted} textSelectionEnabled={!areaSelectionEnabled && !annotationMode} highlights={highlights} ocrPage={ocrPages[String(pageNumber)]} onNeedOcrPage={onNeedOcrPage} annotationMode={annotationMode} annotationTool={annotationTool} annotationColor={annotationColor} annotations={annotations} onAnnotationsChange={onAnnotationsChange} />
             : <div key={pageNumber} className="pdf-page-placeholder" data-page-number={pageNumber} style={{ width: 500 * zoom, height: 710 * zoom }}><span>{pageNumber}</span></div>
         })}
       {selectionRect && <div className="document-selection-rect" style={selectionRect} />}

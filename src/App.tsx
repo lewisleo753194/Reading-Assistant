@@ -18,8 +18,8 @@ import NoteEditor from './components/NoteEditor'
 import ProjectExplorer from './components/ProjectExplorer'
 import StudioPanel from './components/StudioPanel'
 import WorkspacePanel from './components/WorkspacePanel'
-import { extractPdfRegionText, extractPdfText, loadPdf } from './lib/pdf'
-import type { AiAction, AiConfig, AnnotationTool, CapturedSelection, ChatAttachmentKind, ChatAttachmentSummary, ChatContextSnapshot, ChatMessage, Conversation, DocumentAnnotation, DocumentHighlight, ImportedSkill, MemorySettings, PanelId, PanelLayout, SelectionResult, SourceFile, StudyProject, TextAnnotation, WorkArea } from './types'
+import { buildPdfPageText, extractPdfText, loadPdf, parsePdfPageText, renderPdfPageForOcr } from './lib/pdf'
+import type { AiAction, AiConfig, AnnotationTool, CapturedSelection, ChatAttachmentKind, ChatAttachmentSummary, ChatContextSnapshot, ChatMessage, Conversation, DocumentAnnotation, DocumentHighlight, ImportedSkill, MemorySettings, OcrPage, PanelId, PanelLayout, SelectionResult, SourceFile, StudyProject, TextAnnotation, WorkArea } from './types'
 import { getLanguagePacks, registerLanguagePack, useI18n, type AppLanguage, type LanguagePack } from './i18n'
 import { parseLanguageImport, parseSkillImport } from './lib/imports'
 import { deleteConversationAttachment, deleteConversationAttachments, deleteFileMemory, deleteProjectConversationAttachments, deleteProjectMemory, getFileMemory, getFileMemoryId, listConversationAttachments, listFileMemories, listFileMemoryRecords, listProjectMemories, saveConversationAttachment, saveFileMemory, saveProjectMemory, type ConversationAttachmentRecord, type FileMemoryRecord, type FileMemorySummary } from './lib/memory'
@@ -66,6 +66,12 @@ const chatImageToDataUrl = async (file: File) => {
   bitmap.close()
   return canvas.toDataURL('image/jpeg', .88)
 }
+const selectionImageToFile = async (dataUrl: string, name: string) => {
+  const response = await fetch(dataUrl)
+  if (!response.ok) throw new Error('无法保存选区图片。')
+  const blob = await response.blob()
+  return new File([blob], name, { type: blob.type || 'image/png', lastModified: getCurrentTimestamp() })
+}
 type RuntimeChatAttachment = ChatAttachmentSummary & {
   file: File
   mimeType: string
@@ -86,7 +92,7 @@ const getChatAttachmentKind = (file: File): ChatAttachmentKind | null => file.ty
 const formatFileSize = (size: number) => size < 1024 * 1024 ? `${Math.max(1, Math.round(size / 1024))} KB` : `${(size / 1024 / 1024).toFixed(1)} MB`
 const attachmentFromRecord = (record: ConversationAttachmentRecord): RuntimeChatAttachment => {
   const file = new File([record.fileBlob], record.name, { type: record.mimeType, lastModified: record.lastModified })
-  return { id: record.id, name: record.name, kind: record.kind, size: record.size, file, mimeType: record.mimeType, lastModified: record.lastModified, createdAt: record.createdAt, messageId: record.messageId, previewUrl: record.kind === 'image' ? URL.createObjectURL(file) : '', preparedText: record.preparedText }
+  return { id: record.id, name: record.name, kind: record.kind, size: record.size, origin: record.origin, page: record.page, file, mimeType: record.mimeType, lastModified: record.lastModified, createdAt: record.createdAt, messageId: record.messageId, previewUrl: record.kind === 'image' ? URL.createObjectURL(file) : '', preparedText: record.preparedText }
 }
 const contextSnapshotLabel = (snapshot?: ChatContextSnapshot) => {
   if (!snapshot) return ''
@@ -112,6 +118,8 @@ const normalizeAssistantMarkdown = (content: string) => content
 
 type HighlightRegion = NonNullable<DocumentHighlight['regions']>[number]
 type ProjectDialogState = { mode: 'create' | 'rename' | 'delete' | 'delete-source'; projectId?: string; sourceId?: string; value: string }
+type DeleteConfirmationState = { kind: 'message' | 'conversation'; id: string; label: string }
+type ImagePreviewState = { url: string; name: string; page?: number; sourceName?: string }
 const highlightRegionOverlap = (a: HighlightRegion, b: HighlightRegion) => {
   if (a.page !== b.page) return false
   const left = Math.max(a.region.left, b.region.left)
@@ -140,10 +148,14 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
   const [projects, setProjects] = useState<StudyProject[]>([])
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null)
   const [projectDialog, setProjectDialog] = useState<ProjectDialogState | null>(null)
+  const [deleteConfirmation, setDeleteConfirmation] = useState<DeleteConfirmationState | null>(null)
+  const [imagePreview, setImagePreview] = useState<ImagePreviewState | null>(null)
   const [activeWorkAreaId, setActiveWorkAreaId] = useState<string | null>(null)
   const [source, setSource] = useState<SourceFile | null>(null)
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null)
   const [documentText, setDocumentText] = useState('')
+  const [documentProcessingComplete, setDocumentProcessingComplete] = useState(false)
+  const [ocrPages, setOcrPages] = useState<Record<string, OcrPage>>({})
   const [selectedText, setSelectedText] = useState('')
   const [selections, setSelections] = useState<CapturedSelection[]>([])
   const [initialConversationId] = useState<string>(() => makeId())
@@ -162,11 +174,7 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
   const [leftDockWidth, setLeftDockWidth] = useState(() => Number(localStorage.getItem('reading-assistant-left-width')) || 300)
   const [rightDockWidth, setRightDockWidth] = useState(() => Number(localStorage.getItem('reading-assistant-right-width')) || 390)
   const [promptHeight, setPromptHeight] = useState(78)
-  const [selectionSplitRatio, setSelectionSplitRatio] = useState(() => {
-    const saved = Number(localStorage.getItem('reading-assistant-selection-split'))
-    return Number.isFinite(saved) && saved >= .15 && saved <= .85 ? saved : .46
-  })
-  const [busy, setBusy] = useState<'ocr' | 'extract' | ''>('')
+  const [busy] = useState<'ocr' | 'extract' | ''>('')
   const [aiTasks, setAiTasks] = useState<Set<string>>(() => new Set())
   const [progress, setProgress] = useState('')
   const [error, setError] = useState('')
@@ -190,10 +198,16 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
   const [panelLayouts, setPanelLayouts] = useState(() => normalizePanelZ(loadPanelLayouts()))
   const abortControllersRef = useRef(new Map<string, AbortController>())
   const documentContextPromisesRef = useRef(new Map<string, Promise<string>>())
-  const hasVisualSelection = (aiConfig.provider === 'codex' || aiConfig.visionEnabled) && selections.some((item) => item.images.length > 0)
+  const hasVisualSelection = selections.some((item) => item.images.length > 0)
   const selectionReady = Boolean(selectedText || hasVisualSelection)
   const workerRef = useRef<OcrWorker | null>(null)
   const workerPromiseRef = useRef<Promise<OcrWorker> | null>(null)
+  const ocrIdleTimerRef = useRef<number | null>(null)
+  const ocrQueueRef = useRef<Promise<void>>(Promise.resolve())
+  const ocrPagePromisesRef = useRef(new Map<string, Promise<OcrPage>>())
+  const ocrPagesRef = useRef<Record<string, OcrPage>>({})
+  const documentTextRef = useRef('')
+  const workAreasRef = useRef<WorkArea[]>([])
   const showOcrProgressRef = useRef(false)
   const resultsEndRef = useRef<HTMLDivElement>(null)
   const panelScrollRef = useRef<HTMLDivElement>(null)
@@ -208,11 +222,7 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
     | null
   >(null)
   const selectionBodyRef = useRef<HTMLDivElement>(null)
-  const selectionSplitRef = useRef<HTMLDivElement>(null)
   const selectionImagesRef = useRef<HTMLDivElement>(null)
-  const selectionTextRef = useRef<HTMLTextAreaElement>(null)
-  const selectionSplitRatioRef = useRef(selectionSplitRatio)
-  const selectionSplitDragRef = useRef<{ imagesAtBottom: boolean; textAtBottom: boolean } | null>(null)
   const activeWorkAreaIdRef = useRef<string | null>(null)
   const activeProjectIdRef = useRef<string | null>(null)
   const activeConversationIdRef = useRef(activeConversationId)
@@ -308,42 +318,15 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
     document.body.classList.add('resizing-dock-split')
   }
 
-  const selectionPaneAtBottom = (element: HTMLElement | null) => !element || element.scrollHeight - element.scrollTop - element.clientHeight <= 16
-  const startSelectionSplit = (event: ReactPointerEvent<HTMLDivElement>) => {
-    event.preventDefault()
-    event.currentTarget.setPointerCapture(event.pointerId)
-    selectionSplitDragRef.current = { imagesAtBottom: selectionPaneAtBottom(selectionImagesRef.current), textAtBottom: selectionPaneAtBottom(selectionTextRef.current) }
-    document.body.classList.add('resizing-selection-split')
-  }
-  const moveSelectionSplit = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!selectionSplitDragRef.current || !selectionSplitRef.current) return
-    const bounds = selectionSplitRef.current.getBoundingClientRect()
-    const available = Math.max(1, bounds.height - 7)
-    const minimum = Math.min(86, available * .4)
-    const imageHeight = Math.max(minimum, Math.min(available - minimum, event.clientY - bounds.top - 3.5))
-    const next = imageHeight / available
-    selectionSplitRatioRef.current = next
-    setSelectionSplitRatio(next)
-    window.requestAnimationFrame(() => {
-      const dragging = selectionSplitDragRef.current
-      if (!dragging) return
-      if (dragging.imagesAtBottom && selectionImagesRef.current) selectionImagesRef.current.scrollTop = selectionImagesRef.current.scrollHeight
-      if (dragging.textAtBottom && selectionTextRef.current) selectionTextRef.current.scrollTop = selectionTextRef.current.scrollHeight
-    })
-  }
-  const stopSelectionSplit = () => {
-    if (!selectionSplitDragRef.current) return
-    selectionSplitDragRef.current = null
-    document.body.classList.remove('resizing-selection-split')
-    localStorage.setItem('reading-assistant-selection-split', String(selectionSplitRatioRef.current))
-  }
-
   useEffect(() => { activeWorkAreaIdRef.current = activeWorkAreaId }, [activeWorkAreaId])
   useEffect(() => { activeProjectIdRef.current = activeProjectId }, [activeProjectId])
   useEffect(() => { activeConversationIdRef.current = activeConversationId }, [activeConversationId])
   useEffect(() => { pendingChatAttachmentsRef.current = pendingChatAttachments }, [pendingChatAttachments])
   useEffect(() => { conversationAttachmentsRef.current = conversationAttachments }, [conversationAttachments])
   useEffect(() => { selectionsRef.current = selections }, [selections])
+  useEffect(() => { ocrPagesRef.current = ocrPages }, [ocrPages])
+  useEffect(() => { documentTextRef.current = documentText }, [documentText])
+  useEffect(() => { workAreasRef.current = workAreas }, [workAreas])
   useEffect(() => {
     let active = true
     revokeAttachmentPreviews(pendingChatAttachmentsRef.current)
@@ -431,7 +414,9 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
         scope,
         fileBlob: source.file,
         documentText,
-        documentTextVersion: 3,
+        documentTextVersion: 4,
+        documentProcessingComplete,
+        ocrPages,
         note,
         noteAssets,
         highlights,
@@ -442,7 +427,7 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
       void saveFileMemory(record).catch(() => undefined)
     }, 700)
     return () => window.clearTimeout(timer)
-  }, [source, conversations, activeConversationId, history, currentPage, zoom, areaSelectionEnabled, scope, documentText, note, noteAssets, highlights, annotations, activeProjectId, activeWorkAreaId, workAreas])
+  }, [source, conversations, activeConversationId, history, currentPage, zoom, areaSelectionEnabled, scope, documentText, documentProcessingComplete, ocrPages, note, noteAssets, highlights, annotations, activeProjectId, activeWorkAreaId, workAreas])
 
   useEffect(() => {
     const inactiveAreas = workAreas.filter((area) => area.id !== activeWorkAreaId && !forgottenFileKeysRef.current.has(area.memoryKey))
@@ -466,7 +451,9 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
           scope: area.scope,
           fileBlob: area.source.file,
           documentText: area.documentText,
-          documentTextVersion: 3,
+          documentTextVersion: 4,
+          documentProcessingComplete: area.documentProcessingComplete,
+          ocrPages: area.ocrPages,
           note: area.note,
           noteAssets: area.noteAssets,
           highlights: area.highlights,
@@ -523,7 +510,7 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
           void saveFileMemory({ ...record, id: memoryKey, projectId }).then(() => deleteFileMemory(record.id)).catch(() => undefined)
         }
         const project = projectMap.get(projectId)
-        return { id: makeId(), projectId, memoryKey, source: { name: file.name, kind: getSourceKind(file), url: URL.createObjectURL(file), file, openaiFileId: record.openaiFileId, indexStatus: record.indexStatus || 'local' }, pdf: null, documentText: record.documentTextVersion === 3 ? record.documentText || '' : '', selectedText: '', selections: [], conversations: project?.conversations || savedConversations, activeConversationId: project?.activeConversationId || savedActiveConversationId, customPrompt: '', zoom: record.zoom || 1, currentPage: record.currentPage || 1, areaSelectionEnabled: record.areaSelectionEnabled || false, scope: record.scope === 'selection' ? 'general' : record.scope || 'general', note: record.note || '', noteAssets: record.noteAssets || {}, highlights: record.highlights || [], annotations: record.annotations || [] }
+        return { id: makeId(), projectId, memoryKey, source: { name: file.name, kind: getSourceKind(file), url: URL.createObjectURL(file), file, openaiFileId: record.openaiFileId, indexStatus: record.indexStatus || 'local' }, pdf: null, documentText: record.documentTextVersion === 3 || record.documentTextVersion === 4 ? record.documentText || '' : '', documentProcessingComplete: record.documentTextVersion === 4 && Boolean(record.documentProcessingComplete), ocrPages: record.ocrPages || {}, selectedText: '', selections: [], conversations: project?.conversations || savedConversations, activeConversationId: project?.activeConversationId || savedActiveConversationId, customPrompt: '', zoom: record.zoom || 1, currentPage: record.currentPage || 1, areaSelectionEnabled: record.areaSelectionEnabled || false, scope: record.scope === 'selection' ? 'general' : record.scope || 'general', note: record.note || '', noteAssets: record.noteAssets || {}, highlights: record.highlights || [], annotations: record.annotations || [] }
       })
       setProjects(restoredProjects)
       setWorkAreas(restored)
@@ -539,6 +526,7 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
   }, [])
 
   useEffect(() => () => {
+    if (ocrIdleTimerRef.current !== null) window.clearTimeout(ocrIdleTimerRef.current)
     workerRef.current?.terminate()
     if (pageJumpFrameRef.current !== null) cancelAnimationFrame(pageJumpFrameRef.current)
   }, [])
@@ -566,7 +554,9 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
     id: activeWorkAreaId,
     projectId: workAreas.find((area) => area.id === activeWorkAreaId)?.projectId || activeProjectId || legacyProjectId,
     memoryKey: getFileMemoryId(source.file, workAreas.find((area) => area.id === activeWorkAreaId)?.projectId || activeProjectId || legacyProjectId),
-    source, pdf, documentText, selectedText, selections,
+    // DocumentViewer owns the live PDF.js document. Keeping it in inactive
+    // work areas prevents PDF.js decoder and page caches from being released.
+    source, pdf: null, documentText, documentProcessingComplete, ocrPages, selectedText, selections,
     conversations: conversations.map((item) => item.id === activeConversationId ? { ...item, history } : item),
     activeConversationId, customPrompt,
     zoom, currentPage, areaSelectionEnabled, scope, note, noteAssets, highlights, annotations,
@@ -574,7 +564,8 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
 
   const loadWorkArea = (area: WorkArea) => {
     chatFollowsLatestRef.current = true
-    setSource(area.source); setPdf(area.pdf); setDocumentText(area.documentText); setSelectedText(area.selectedText)
+    setSource(area.source); setPdf(null); setDocumentText(area.documentText); setDocumentProcessingComplete(area.documentProcessingComplete); setOcrPages(area.ocrPages); setSelectedText(area.selectedText)
+    ocrPagesRef.current = area.ocrPages
     setSelections(area.selections); setConversations(area.conversations); setActiveConversationId(area.activeConversationId)
     selectionsRef.current = area.selections
     setHistory(area.conversations.find((item) => item.id === area.activeConversationId)?.history || [])
@@ -587,11 +578,13 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
   }
 
   const clearReader = () => {
-    setSource(null); setPdf(null); setDocumentText(''); setSelectedText(''); setSelections([])
+    setSource(null); setPdf(null); setDocumentText(''); setDocumentProcessingComplete(false); setOcrPages({}); setSelectedText(''); setSelections([])
+    ocrPagesRef.current = {}
     setActiveWorkAreaId(null); activeWorkAreaIdRef.current = null; setNote(''); setNoteAssets({}); setHighlights([]); setAnnotations([]); setError('')
   }
 
   const createStudyProject = (requestedName?: string) => {
+    setImagePreview(null)
     const name = (requestedName || `学习项目 ${projects.length + 1}`).trim()
     const conversation: Conversation = { id: makeId(), title: t('untitledConversation'), history: [] }
     const project: StudyProject = { id: makeId(), name: name.slice(0, 80), createdAt: getCurrentTimestamp(), updatedAt: getCurrentTimestamp(), conversations: [conversation], activeConversationId: conversation.id }
@@ -607,6 +600,7 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
     if (projectId === activeProjectId) return
     const project = projects.find((item) => item.id === projectId)
     if (!project) return
+    setImagePreview(null)
     const snapshot = snapshotCurrent()
     if (snapshot) setWorkAreas((items) => items.map((item) => item.id === snapshot.id ? snapshot : item))
     const target = workAreas.find((area) => area.projectId === projectId)
@@ -704,13 +698,52 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
     }
   }
 
+  const deleteRemoteOpenAiFile = async (fileId: string) => {
+    const response = await fetch('/api/openai/files/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ aiConfig, fileId }),
+    })
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok || !data.deleted) throw new Error(data.error || 'OpenAI 文件未能删除。')
+  }
+
+  const deleteRemoteVectorStore = async (vectorStoreId: string) => {
+    const response = await fetch('/api/openai/vector-stores/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ aiConfig, vectorStoreId }),
+    })
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok || !data.deleted) throw new Error(data.error || 'OpenAI 项目索引未能删除。')
+  }
+
   const removeStudyProject = async (projectId: string) => {
     const project = projects.find((item) => item.id === projectId)
     if (!project) return
     const projectAreas = workAreas.filter((area) => area.projectId === projectId)
-    await Promise.all(projectAreas.map((area) => deleteFileMemory(area.memoryKey).catch(() => undefined)))
-    await deleteProjectMemory(projectId).catch(() => undefined)
-    await deleteProjectConversationAttachments(projectId).catch(() => undefined)
+    if (projectAreas.some((area) => area.source.indexStatus === 'uploading' || Array.from(aiTasks).some((key) => key.startsWith(`${area.id}:`)))) {
+      setError('这个项目仍有文件或回答正在处理中，请停止或等待完成后再删除。')
+      return
+    }
+    const remoteFileIds = [...new Set(projectAreas.map((area) => area.source.openaiFileId).filter((id): id is string => Boolean(id)))]
+    const vectorStoreId = project.vectorStoreId || vectorStoreIdsRef.current.get(projectId) || ''
+    try {
+      for (const fileId of remoteFileIds) await deleteRemoteOpenAiFile(fileId)
+      if (vectorStoreId) await deleteRemoteVectorStore(vectorStoreId)
+    } catch (reason) {
+      setError(`远端项目数据清理失败，本地项目尚未删除：${reason instanceof Error ? reason.message : '请检查网络和 OpenAI 配置后重试。'}`)
+      return
+    }
+    projectAreas.forEach((area) => forgottenFileKeysRef.current.add(area.memoryKey))
+    try {
+      await Promise.all(projectAreas.map((area) => deleteFileMemory(area.memoryKey)))
+      await deleteProjectMemory(projectId)
+      await deleteProjectConversationAttachments(projectId)
+    } catch (reason) {
+      setError(`远端数据已经清理，但本地项目删除失败，请重试：${reason instanceof Error ? reason.message : '本地数据库写入失败。'}`)
+      return
+    }
     vectorStoreIdsRef.current.delete(projectId)
     vectorStoreCreationRef.current.delete(projectId)
     projectAreas.forEach((area) => URL.revokeObjectURL(area.source.url))
@@ -736,6 +769,14 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
       setError('这个文件仍在处理中，请停止或等待处理完成后再删除。')
       return
     }
+    if (target.source.openaiFileId) {
+      try {
+        await deleteRemoteOpenAiFile(target.source.openaiFileId)
+      } catch (reason) {
+        setError(`远端文件清理失败，本地文件尚未删除：${reason instanceof Error ? reason.message : '请检查网络和 OpenAI 配置后重试。'}`)
+        return
+      }
+    }
     forgottenFileKeysRef.current.add(target.memoryKey)
     try {
       await deleteFileMemory(target.memoryKey)
@@ -745,15 +786,10 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
       return
     }
     URL.revokeObjectURL(target.source.url)
-    const project = projects.find((item) => item.id === target.projectId)
-    const shouldResetProjectIndex = Boolean(target.source.openaiFileId || project?.vectorStoreId || vectorStoreIdsRef.current.has(target.projectId))
-    const remaining = workAreas.filter((area) => area.id !== sourceId).map((area) => area.projectId === target.projectId && shouldResetProjectIndex
-      ? { ...area, source: { ...area.source, openaiFileId: undefined, indexStatus: 'local' as const } }
-      : area)
-    if (shouldResetProjectIndex) vectorStoreIdsRef.current.delete(target.projectId)
+    const remaining = workAreas.filter((area) => area.id !== sourceId)
     setWorkAreas(remaining)
     setProjects((items) => items.map((item) => item.id === target.projectId
-      ? { ...item, vectorStoreId: shouldResetProjectIndex ? undefined : item.vectorStoreId, updatedAt: getCurrentTimestamp() }
+      ? { ...item, updatedAt: getCurrentTimestamp() }
       : item))
     if (target.id === activeWorkAreaId) {
       const previousProjectAreas = workAreas.filter((area) => area.projectId === target.projectId)
@@ -768,9 +804,6 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
       } else {
         clearReader()
       }
-    } else if (shouldResetProjectIndex && activeProjectId === target.projectId) {
-      const current = remaining.find((area) => area.id === activeWorkAreaId)
-      if (current) setSource(current.source)
     }
     setProjectMemories(await listFileMemories())
   }
@@ -822,11 +855,11 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
       ? remembered!.activeConversationId
       : project?.activeConversationId || (snapshot?.projectId === projectId ? snapshot.activeConversationId : '') || restoredConversations[0]?.id || ''
     const kind = getSourceKind(file)
-    let initialDocumentText = remembered?.documentTextVersion === 3 ? remembered.documentText || '' : ''
+    let initialDocumentText = remembered?.documentTextVersion === 3 || remembered?.documentTextVersion === 4 ? remembered.documentText || '' : ''
     if (kind === 'text' && !initialDocumentText) initialDocumentText = `[第 1 页]\n${await file.text()}`
     const next: WorkArea = {
       id, projectId, memoryKey, source: { name: file.name, kind, url: URL.createObjectURL(file), file, openaiFileId: remembered?.openaiFileId, indexStatus: remembered?.indexStatus || 'local' },
-      pdf: null, documentText: initialDocumentText, selectedText: '', selections: [], conversations: restoredConversations, activeConversationId: restoredActiveConversationId, customPrompt: '', zoom: remembered?.zoom || 1,
+      pdf: null, documentText: initialDocumentText, documentProcessingComplete: kind === 'text' || (remembered?.documentTextVersion === 4 && Boolean(remembered.documentProcessingComplete)), ocrPages: remembered?.ocrPages || {}, selectedText: '', selections: [], conversations: restoredConversations, activeConversationId: restoredActiveConversationId, customPrompt: '', zoom: remembered?.zoom || 1,
       currentPage: remembered?.currentPage || 1, areaSelectionEnabled: remembered?.areaSelectionEnabled || false, scope: remembered?.scope === 'selection' ? 'general' : remembered?.scope || 'general', note: remembered?.note || '', noteAssets: remembered?.noteAssets || {}, highlights: remembered?.highlights || [], annotations: remembered?.annotations || [],
     }
     setWorkAreas((items) => [...items.map((item) => snapshot && item.id === snapshot.id ? snapshot : item), next])
@@ -854,14 +887,14 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
     for (const file of files) {
       const kind = getChatAttachmentKind(file)
       if (!kind) { rejected.push(`${file.name}：暂不支持此格式`); continue }
-      const combined = [...conversationAttachmentsRef.current, ...nextPending]
+      const combined = [...conversationAttachmentsRef.current.filter((item) => item.origin !== 'selection'), ...nextPending]
       if (combined.length >= maxConversationAttachments) { rejected.push(`每个对话最多 ${maxConversationAttachments} 个附件`); break }
       if (combined.some((item) => item.name === file.name && item.size === file.size && item.lastModified === file.lastModified)) continue
       const imageCount = combined.filter((item) => item.kind === 'image').length
       if (kind === 'image' && imageCount >= maxConversationImages) { rejected.push(`每个对话最多 ${maxConversationImages} 张图片`); continue }
       const maximumBytes = kind === 'text' ? 5 * 1024 * 1024 : kind === 'image' ? 12 * 1024 * 1024 : 40 * 1024 * 1024
       if (file.size > maximumBytes) { rejected.push(`${file.name}：文件过大`); continue }
-      nextPending.push({ id: makeId(), name: file.name, kind, size: file.size, file, mimeType: file.type || (kind === 'pdf' ? 'application/pdf' : 'text/plain'), lastModified: file.lastModified, createdAt: getCurrentTimestamp(), messageId: '', previewUrl: kind === 'image' ? URL.createObjectURL(file) : '' })
+      nextPending.push({ id: makeId(), name: file.name, kind, size: file.size, origin: 'upload', file, mimeType: file.type || (kind === 'pdf' ? 'application/pdf' : 'text/plain'), lastModified: file.lastModified, createdAt: getCurrentTimestamp(), messageId: '', previewUrl: kind === 'image' ? URL.createObjectURL(file) : '' })
     }
     pendingChatAttachmentsRef.current = nextPending
     setPendingChatAttachments(nextPending)
@@ -896,7 +929,7 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
     if (signal.aborted) throw new DOMException('Aborted', 'AbortError')
     if (attachment.kind === 'image') {
       setProgress(`正在读取对话图片：${attachment.name}`)
-      return { ...attachment, preparedText: `【本次对话临时图片：${safeSourceLabel(attachment.name)}】`, preparedImages: [await chatImageToDataUrl(attachment.file)] }
+      return { ...attachment, preparedText: attachment.origin === 'selection' ? `【本轮视觉选区：${safeSourceLabel(attachment.name)}】` : `【本次对话临时图片：${safeSourceLabel(attachment.name)}】`, preparedImages: [await chatImageToDataUrl(attachment.file)] }
     }
     if (attachment.kind === 'text') {
       setProgress(`正在读取对话附件：${attachment.name}`)
@@ -959,6 +992,7 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
     const synced = syncCurrentConversation()
     const target = synced.find((item) => item.id === id)
     if (!target) return
+    setImagePreview(null)
     setConversations(synced)
     setActiveConversationId(id)
     activeConversationIdRef.current = id
@@ -969,6 +1003,7 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
   }
 
   const createConversation = () => {
+    setImagePreview(null)
     const conversation: Conversation = { id: makeId(), title: t('untitledConversation'), history: [] }
     setConversations([...syncCurrentConversation(), conversation])
     setActiveConversationId(conversation.id)
@@ -1012,7 +1047,9 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
     pendingPageRestoreRef.current = pageNumber
     setCurrentPage(pageNumber)
     if (pageJumpFrameRef.current !== null) cancelAnimationFrame(pageJumpFrameRef.current)
-    let attemptsRemaining = 20
+    // Large PDFs can take several seconds to mount the requested page after a
+    // source switch. Keep the pending target authoritative until it exists.
+    let attemptsRemaining = 360
     const tryJump = () => {
       pageJumpFrameRef.current = null
       const container = readerScrollRef.current
@@ -1021,6 +1058,10 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
       if (!container || stack?.dataset.sourceUrl !== expectedSourceUrl || !target) {
         attemptsRemaining -= 1
         if (attemptsRemaining > 0) pageJumpFrameRef.current = requestAnimationFrame(tryJump)
+        else {
+          pendingPageRestoreRef.current = null
+          setError(`无法跳转到第 ${pageNumber} 页，请等待文档加载完成后重试。`)
+        }
         return
       }
       const top = target.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop - 20
@@ -1051,6 +1092,7 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
       scrollFrameRef.current = null
       const container = readerScrollRef.current
       if (!container) return
+      if (pendingPageRestoreRef.current !== null) return
       const targetY = container.getBoundingClientRect().top + container.clientHeight * 0.38
       let closestPage = currentPage
       let closestDistance = Number.POSITIVE_INFINITY
@@ -1087,6 +1129,10 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
   }
 
   const getWorker = useCallback(async () => {
+    if (ocrIdleTimerRef.current !== null) {
+      window.clearTimeout(ocrIdleTimerRef.current)
+      ocrIdleTimerRef.current = null
+    }
     if (!workerPromiseRef.current) {
       workerPromiseRef.current = import('tesseract.js').then(({ createWorker }) => createWorker(['chi_sim', 'eng'], 1, {
         logger: (message) => {
@@ -1103,68 +1149,111 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
     return workerPromiseRef.current
   }, [t])
 
+  const scheduleOcrWorkerRelease = useCallback(() => {
+    if (ocrIdleTimerRef.current !== null) window.clearTimeout(ocrIdleTimerRef.current)
+    ocrIdleTimerRef.current = window.setTimeout(() => {
+      ocrIdleTimerRef.current = null
+      const worker = workerRef.current
+      workerRef.current = null
+      workerPromiseRef.current = null
+      void worker?.terminate().catch(() => undefined)
+    }, 60_000)
+  }, [])
+
+  const runQueuedOcr = useCallback(<T,>(job: () => Promise<T>) => {
+    const result = ocrQueueRef.current.then(job, job)
+    ocrQueueRef.current = result.then(() => undefined, () => undefined)
+    return result
+  }, [])
+
   const recognize = async (image: string) => {
     showOcrProgressRef.current = true
     setProgress(t('preparingOcr'))
     const worker = await getWorker()
     try {
-      const result = await worker.recognize(image)
+      const result = await runQueuedOcr(() => worker.recognize(image))
       return result.data.text.trim()
     } finally {
       showOcrProgressRef.current = false
+      scheduleOcrWorkerRelease()
     }
   }
 
-  const onSelect = async (result: SelectionResult) => {
-    const selectionId = makeId()
-    const modelCanReadSelectionImage = aiConfig.provider === 'codex' || aiConfig.visionEnabled
-    const annotationParts = result.images.map((_, index) => {
-      const annotationText = result.annotationTexts?.[index]?.trim() || ''
-      return annotationText ? `批注：${annotationText}` : ''
+  const recognizePdfPage = useCallback(async (targetPdf: PDFDocumentProxy, pageNumber: number) => runQueuedOcr(async () => {
+    const canvas = await renderPdfPageForOcr(targetPdf, pageNumber)
+    try {
+      const worker = await getWorker()
+      const result = await worker.recognize(canvas, {}, { text: true, blocks: true })
+      const words = (result.data.blocks || []).flatMap((block) => block.paragraphs).flatMap((paragraph) => paragraph.lines).flatMap((line) => line.words).filter((word) => word.text.trim()).map((word) => ({
+        text: word.text,
+        left: Math.max(0, Math.min(1, word.bbox.x0 / canvas.width)),
+        top: Math.max(0, Math.min(1, word.bbox.y0 / canvas.height)),
+        width: Math.max(.001, Math.min(1, (word.bbox.x1 - word.bbox.x0) / canvas.width)),
+        height: Math.max(.001, Math.min(1, (word.bbox.y1 - word.bbox.y0) / canvas.height)),
+      }))
+      return { page: pageNumber, text: result.data.text.trim(), words }
+    } finally {
+      canvas.width = 0
+      canvas.height = 0
+      scheduleOcrWorkerRelease()
+    }
+  }), [getWorker, runQueuedOcr, scheduleOcrWorkerRelease])
+
+  const getOrCreateOcrPage = useCallback((workspaceId: string, targetPdf: PDFDocumentProxy, pageNumber: number, signal?: AbortSignal) => {
+    const cached = activeWorkAreaIdRef.current === workspaceId
+      ? ocrPagesRef.current[String(pageNumber)]
+      : workAreasRef.current.find((area) => area.id === workspaceId)?.ocrPages[String(pageNumber)]
+    if (cached) return Promise.resolve(cached)
+    const key = `${workspaceId}:${pageNumber}`
+    let task = ocrPagePromisesRef.current.get(key)
+    if (!task) {
+      task = recognizePdfPage(targetPdf, pageNumber)
+      ocrPagePromisesRef.current.set(key, task)
+      void task.finally(() => ocrPagePromisesRef.current.delete(key)).catch(() => undefined)
+    }
+    return waitForAbort(task, signal)
+  }, [recognizePdfPage])
+
+  const commitDocumentProcessing = useCallback((workspaceId: string, text: string, nextOcrPages: Record<string, OcrPage>, complete: boolean) => {
+    setWorkAreas((items) => {
+      const next = items.map((area) => area.id === workspaceId ? { ...area, documentText: text, documentProcessingComplete: complete, ocrPages: nextOcrPages } : area)
+      workAreasRef.current = next
+      return next
     })
-    const annotationText = annotationParts.filter(Boolean).join('\n\n')
-    const captured: CapturedSelection = { ...result, id: selectionId, text: annotationText, textParts: annotationParts, loading: !modelCanReadSelectionImage }
+    if (activeWorkAreaIdRef.current !== workspaceId) return
+    documentTextRef.current = text
+    ocrPagesRef.current = nextOcrPages
+    setDocumentText(text)
+    setDocumentProcessingComplete(complete)
+    setOcrPages(nextOcrPages)
+  }, [])
+
+  const requestVisibleOcrPage = useCallback((pageNumber: number) => {
+    const workspaceId = activeWorkAreaIdRef.current
+    const targetPdf = pdf
+    if (!workspaceId || !targetPdf || ocrPagesRef.current[String(pageNumber)]) return
+    void getOrCreateOcrPage(workspaceId, targetPdf, pageNumber).then((pageResult) => {
+      if (activeWorkAreaIdRef.current !== workspaceId) return
+      const nextOcrPages = { ...ocrPagesRef.current, [String(pageNumber)]: pageResult }
+      const pageText = parsePdfPageText(documentTextRef.current)
+      pageText.set(pageNumber, pageResult.text)
+      commitDocumentProcessing(workspaceId, buildPdfPageText(pageText), nextOcrPages, false)
+    }).catch(() => undefined)
+  }, [commitDocumentProcessing, getOrCreateOcrPage, pdf])
+
+  const onSelect = (result: SelectionResult) => {
+    const selectionId = makeId()
+    // Area selections are visual inputs. Do not OCR them or promote overlapping
+    // annotation text into a competing text prompt; the model receives the crop.
+    const captured: CapturedSelection = { ...result, id: selectionId, text: '', textParts: result.images.map(() => ''), loading: false }
     setSelections((items) => { const next = [...items, captured]; selectionsRef.current = next; return next })
     setScope('selection')
     setError('')
-    if (modelCanReadSelectionImage) {
-      if (annotationText) setSelectedText((previous) => [previous, annotationText].filter(Boolean).join('\n\n'))
-      return
-    }
-    setBusy('ocr')
-    try {
-      const textParts: string[] = result.images.map(() => '')
-      for (let index = 0; index < result.regions.length; index += 1) {
-        const selectedRegion = result.regions[index]
-        let part = ''
-        if (source?.kind === 'pdf' && pdf) {
-          setProgress(t('readingPdfText'))
-          part = await extractPdfRegionText(pdf, selectedRegion.page, selectedRegion.region)
-        }
-        if (!part) part = await recognize(result.images[index])
-        const annotationText = result.annotationTexts?.[index]?.trim() || ''
-        textParts[index] = [part, annotationText && `批注：${annotationText}`].filter(Boolean).join('\n')
-      }
-      const current = selectionsRef.current.find((item) => item.id === selectionId)
-      if (!current) return
-      const survivingParts = current.images.map((image) => textParts[result.images.indexOf(image)] || '')
-      const text = survivingParts.filter(Boolean).join('\n\n')
-      setSelections((items) => { const next = items.map((item) => item.id === selectionId ? { ...item, text, textParts: survivingParts, loading: false } : item); selectionsRef.current = next; return next })
-      if (text) setSelectedText((previous) => [previous, text].filter(Boolean).join('\n\n'))
-      if (!text) setError(t('noText'))
-    } catch (reason) {
-      setSelections((items) => { const next = items.map((item) => item.id === selectionId ? { ...item, loading: false } : item); selectionsRef.current = next; return next })
-      setError(reason instanceof Error ? `${t('ocrFailed')}: ${reason.message}` : t('ocrFailed'))
-    } finally {
-      setBusy('')
-      setProgress('')
-    }
   }
 
   const removeSelectionImage = (selectionId: string, imageIndex: number) => {
     const target = selectionsRef.current.find((item) => item.id === selectionId)
     if (!target) return
-    const removedText = target.textParts[imageIndex] || ''
     const images = target.images.filter((_, index) => index !== imageIndex)
     const regions = target.regions.filter((_, index) => index !== imageIndex)
     const textParts = target.textParts.filter((_, index) => index !== imageIndex)
@@ -1173,16 +1262,50 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
     const nextSelections = images.length || text ? selectionsRef.current.map((item) => item.id === selectionId ? nextSelection : item) : selectionsRef.current.filter((item) => item.id !== selectionId)
     selectionsRef.current = nextSelections
     setSelections(nextSelections)
-    if (removedText) setSelectedText((previous) => {
-      const index = previous.indexOf(removedText)
-      if (index < 0) return previous
-      return `${previous.slice(0, index)}${previous.slice(index + removedText.length)}`.replace(/\n{3,}/g, '\n\n').trim()
-    })
+  }
+
+  const pdfOcrBatchSize = 6
+
+  const buildCompletePdfContext = async (
+    workspaceId: string,
+    targetPdf: PDFDocumentProxy,
+    cachedOcrPages: Record<string, OcrPage>,
+    signal: AbortSignal | undefined,
+    report: (message: string) => void,
+  ) => {
+    const nativeText = await extractPdfText(targetPdf, (done, total) => report(`${t('extracting')} ${done}/${total}`), Number.POSITIVE_INFINITY, signal)
+    const pageText = parsePdfPageText(nativeText)
+    const pagesNeedingOcr = Array.from({ length: targetPdf.numPages }, (_, index) => index + 1).filter((pageNumber) => (pageText.get(pageNumber) || '').replace(/\s/g, '').length < 3)
+    const nextOcrPages = { ...cachedOcrPages }
+    if (!pagesNeedingOcr.length) {
+      commitDocumentProcessing(workspaceId, nativeText, nextOcrPages, true)
+      return nativeText
+    }
+
+    for (let batchStart = 0; batchStart < pagesNeedingOcr.length; batchStart += pdfOcrBatchSize) {
+      const batch = pagesNeedingOcr.slice(batchStart, batchStart + pdfOcrBatchSize)
+      for (let index = 0; index < batch.length; index += 1) {
+        if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
+        const pageNumber = batch[index]
+        const completed = batchStart + index
+        const batchNumber = Math.floor(batchStart / pdfOcrBatchSize) + 1
+        const batchCount = Math.ceil(pagesNeedingOcr.length / pdfOcrBatchSize)
+        report(`${t('scannedOcr')} ${completed + 1}/${pagesNeedingOcr.length} · 第 ${batchNumber}/${batchCount} 批`)
+        const pageResult = nextOcrPages[String(pageNumber)] || await getOrCreateOcrPage(workspaceId, targetPdf, pageNumber, signal)
+        nextOcrPages[String(pageNumber)] = pageResult
+        pageText.set(pageNumber, pageResult.text)
+        commitDocumentProcessing(workspaceId, buildPdfPageText(pageText, targetPdf.numPages), { ...nextOcrPages }, false)
+      }
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 0))
+    }
+    const completeText = buildPdfPageText(pageText, targetPdf.numPages)
+    commitDocumentProcessing(workspaceId, completeText, nextOcrPages, true)
+    return completeText
   }
 
   const buildDocumentContext = async (workspaceId: string, signal?: AbortSignal) => {
     const existingText = documentText
-    if (existingText) return existingText
+    if (documentProcessingComplete && existingText) return existingText
     if (!source) return ''
     const promiseKey = `${workspaceId}:complete-document`
     const inFlight = documentContextPromisesRef.current.get(promiseKey)
@@ -1194,32 +1317,10 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
         let text = ''
         if (source.kind === 'image') {
           text = await recognize(source.url)
+          commitDocumentProcessing(workspaceId, text, ocrPagesRef.current, true)
         } else if (pdf) {
-          text = await extractPdfText(pdf, (done, total) => report(`${t('extracting')} ${done}/${total}`))
-          const contentLength = text.replace(/\[第 \d+ 页\]|\s/g, '').length
-          if (contentLength < 80) {
-            const ocrPages: string[] = []
-            const pageNumbers = Array.from({ length: pdf.numPages }, (_, index) => index + 1)
-            for (let index = 0; index < pageNumbers.length; index += 1) {
-              if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
-              const pageNumber = pageNumbers[index]
-              report(`${t('scannedOcr')} ${index + 1}/${pageNumbers.length}`)
-              const page = await pdf.getPage(pageNumber)
-              const viewport = page.getViewport({ scale: 1.25 })
-              const canvas = document.createElement('canvas')
-              canvas.width = viewport.width
-              canvas.height = viewport.height
-              const context = canvas.getContext('2d')
-              if (!context) continue
-              await page.render({ canvasContext: context, viewport, canvas }).promise
-              ocrPages.push(`[第 ${pageNumber} 页]\n${await recognize(canvas.toDataURL('image/jpeg', 0.9))}`)
-              page.cleanup()
-            }
-            text = ocrPages.join('\n\n')
-          }
+          text = await buildCompletePdfContext(workspaceId, pdf, ocrPagesRef.current, signal, report)
         }
-        if (activeWorkAreaIdRef.current === workspaceId) setDocumentText(text)
-        else setWorkAreas((items) => items.map((item) => item.id === workspaceId ? { ...item, documentText: text } : item))
         return text
       } finally {
         if (activeWorkAreaIdRef.current === workspaceId) setProgress('')
@@ -1242,38 +1343,22 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
       if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
       const area = areas[index]
       let text = area.documentText
-      let loadedPdf = area.pdf
       if (!text && area.source.kind === 'text') text = `[第 1 页]\n${await area.source.file.text()}`
       if (!text && area.source.kind === 'image') {
         setProgress(`正在识别来源 ${index + 1}/${areas.length}：${area.source.name}`)
         text = `[第 1 页]\n${await recognize(area.source.url)}`
       }
-      if (!text && area.source.kind === 'pdf') {
+      if ((!area.documentProcessingComplete || !text) && area.source.kind === 'pdf') {
         setProgress(`正在索引来源 ${index + 1}/${areas.length}：${area.source.name}`)
-        loadedPdf = loadedPdf || await loadPdf(area.source.url)
-        text = await extractPdfText(loadedPdf)
-        if (text.replace(/\[第 \d+ 页\]|\s/g, '').length < 80) {
-          const ocrPages: string[] = []
-          for (let pageIndex = 0; pageIndex < loadedPdf.numPages; pageIndex += 1) {
-            if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
-            const pageNumber = pageIndex + 1
-            setProgress(`正在逐页识别 ${index + 1}/${areas.length}：${area.source.name} · ${pageNumber}/${loadedPdf.numPages}`)
-            const page = await loadedPdf.getPage(pageNumber)
-            const viewport = page.getViewport({ scale: 1.25 })
-            const canvas = document.createElement('canvas')
-            canvas.width = viewport.width
-            canvas.height = viewport.height
-            const context = canvas.getContext('2d')
-            if (!context) continue
-            await page.render({ canvasContext: context, viewport, canvas }).promise
-            ocrPages.push(`[第 ${pageNumber} 页]\n${await recognize(canvas.toDataURL('image/jpeg', 0.9))}`)
-            page.cleanup()
-          }
-          text = ocrPages.join('\n\n')
+        const loadedPdf = await loadPdf(area.source.url)
+        try {
+          text = await buildCompletePdfContext(area.id, loadedPdf, area.ocrPages, signal, (message) => setProgress(`正在处理来源 ${index + 1}/${areas.length}：${area.source.name} · ${message}`))
+        } finally {
+          await loadedPdf.loadingTask.destroy().catch(() => undefined)
         }
       }
-      if (text !== area.documentText || loadedPdf !== area.pdf) {
-        setWorkAreas((items) => items.map((item) => item.id === area.id ? { ...item, documentText: text, pdf: loadedPdf } : item))
+      if (text !== area.documentText || area.pdf) {
+        setWorkAreas((items) => items.map((item) => item.id === area.id ? { ...item, documentText: text, documentProcessingComplete: true, pdf: null } : item))
       }
       sections.push(`【来源：${safeSourceLabel(area.source.name)}】\n${text || '（此来源尚未提取出可检索文字。）'}`)
     }
@@ -1383,7 +1468,7 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
   const runAi = async (action: AiAction, instruction = '', requestedScope?: WorkArea['scope']) => {
     setError('')
     const pendingForMessage = pendingChatAttachmentsRef.current
-    const existingConversationAttachments = conversationAttachmentsRef.current
+    const existingConversationAttachments = conversationAttachmentsRef.current.filter((attachment) => attachment.origin !== 'selection')
     const workspaceId = activeWorkAreaId || (activeProjectId ? `project:${activeProjectId}` : '')
     if (!workspaceId || !activeProjectId) {
       setError('请先新建或打开一个项目。')
@@ -1438,7 +1523,16 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
     const targetIsDocument = Boolean(source && (targetIsNotebook || effectiveScope === 'document'))
     const targetIsSelection = effectiveScope === 'selection' && selectionReady
     const currentArea = projectAreas.find((area) => area.id === activeWorkAreaId)
-    const selectionImages = targetIsSelection ? selections.flatMap((item) => item.images).slice(0, 4) : []
+    const selectionAttachments: RuntimeChatAttachment[] = targetIsSelection ? await Promise.all(selections.flatMap((selection) => selection.images.map(async (image, imageIndex) => {
+      const page = selection.regions[imageIndex]?.page || selection.page
+      const name = `选区·第 ${page} 页·${imageIndex + 1}.png`
+      const file = await selectionImageToFile(image, name)
+      return {
+        id: makeId(), name, kind: 'image' as const, size: file.size, origin: 'selection' as const, page,
+        file, mimeType: file.type || 'image/png', lastModified: file.lastModified, createdAt: getCurrentTimestamp(),
+        messageId: '', previewUrl: URL.createObjectURL(file),
+      }
+    }))) : []
     const reasoningActive = deepThinking && reasoningAvailable
     const actionLabel = (requestedSkillId ? skills.find((skill) => skill.id === requestedSkillId)?.name : effectiveInstruction) || ({ translate: t('translate'), explain: t('explain'), insight: t('insight'), summarize: t('summarize'), custom: 'AI' }[action])
     const scopeLabel = targetIsGeneral ? t('generalScope') : targetIsNotebook ? (pack.code === 'en-US' ? `${notebookAreas.length} selected sources` : `已选 ${notebookAreas.length} 份来源`) : targetIsDocument ? t('documentScope') : !source && (pendingForMessage.length || existingConversationAttachments.length) ? '对话附件' : t('selectedScope')
@@ -1464,13 +1558,15 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
       selectedSourceCount: targetIsNotebook ? notebookAreas.length : undefined,
       totalSourceCount: targetIsNotebook ? projectAreas.length : undefined,
     }
-    const userMessage: ChatMessage = { id: makeId(), turnId, status: 'completed', role: 'user', content: targetText, contextSnapshot, label: `${actionLabel} · ${contextSnapshotLabel(contextSnapshot) || userLabel}`, sourcePage: source ? currentPage : undefined, attachments: pendingForMessage.map(({ id, name, kind, size }) => ({ id, name, kind, size })) }
-    const sentAttachments = pendingForMessage.map((attachment) => ({ ...attachment, messageId: userMessage.id }))
+    const messageAttachments = [...pendingForMessage, ...selectionAttachments]
+    const userMessage: ChatMessage = { id: makeId(), turnId, status: 'completed', role: 'user', content: targetText, contextSnapshot, label: `${actionLabel} · ${contextSnapshotLabel(contextSnapshot) || userLabel}`, sourcePage: source ? currentPage : undefined, attachments: messageAttachments.map(({ id, name, kind, size, origin, page }) => ({ id, name, kind, size, origin, page })) }
+    const sentAttachments = messageAttachments.map((attachment) => ({ ...attachment, messageId: userMessage.id }))
     const requestAttachments = [...existingConversationAttachments, ...sentAttachments]
+    const storedAttachments = [...conversationAttachmentsRef.current, ...sentAttachments]
     pendingChatAttachmentsRef.current = []
     setPendingChatAttachments([])
-    conversationAttachmentsRef.current = requestAttachments
-    setConversationAttachments(requestAttachments)
+    conversationAttachmentsRef.current = storedAttachments
+    setConversationAttachments(storedAttachments)
     const requestHistory = [...previousHistory, userMessage]
     chatFollowsLatestRef.current = true
     setHistory(requestHistory)
@@ -1508,6 +1604,8 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
         lastModified: attachment.lastModified,
         createdAt: attachment.createdAt,
         fileBlob: attachment.file,
+        origin: attachment.origin,
+        page: attachment.page,
       }))).catch(() => undefined)
       let projectVectorStoreId = ''
       let currentSourceFileId = targetIsDocument && !usingNotebookSubset ? source?.openaiFileId || '' : ''
@@ -1538,16 +1636,18 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
       await Promise.all(preparedAttachments.filter((attachment) => attachment.kind !== 'image' && !attachment.preparedImages?.length && attachment.preparedText).map((attachment) => saveConversationAttachment({
         id: attachment.id, projectId: activeProjectId, conversationId, messageId: attachment.messageId, name: attachment.name, kind: attachment.kind,
         mimeType: attachment.mimeType, size: attachment.size, lastModified: attachment.lastModified, createdAt: attachment.createdAt,
-        fileBlob: attachment.file, preparedText: attachment.preparedText,
+        fileBlob: attachment.file, preparedText: attachment.preparedText, origin: attachment.origin, page: attachment.page,
       }))).catch(() => undefined)
-      conversationAttachmentsRef.current = preparedAttachments
-      setConversationAttachments(preparedAttachments)
+      const preparedById = new Map(preparedAttachments.map((attachment) => [attachment.id, attachment]))
+      const nextStoredAttachments = storedAttachments.map((attachment) => preparedById.get(attachment.id) || attachment)
+      conversationAttachmentsRef.current = nextStoredAttachments
+      setConversationAttachments(nextStoredAttachments)
       const attachmentImages = preparedAttachments.flatMap((attachment) => attachment.preparedImages || [])
       const attachmentContext = preparedAttachments.map((attachment) => attachment.preparedText || '').filter(Boolean).join('\n\n')
-      if (attachmentImages.length + selectionImages.length + notebookImages.length > maxConversationImages) throw new Error(`本次请求共有 ${attachmentImages.length + selectionImages.length + notebookImages.length} 张图片，最多支持 ${maxConversationImages} 张。请删除部分对话图片或选区后再试。`)
-      const requestImages = [...attachmentImages, ...selectionImages, ...notebookImages]
+      if (attachmentImages.length + notebookImages.length > maxConversationImages) throw new Error(`本次请求共有 ${attachmentImages.length + notebookImages.length} 张图片，最多支持 ${maxConversationImages} 张。请删除部分对话图片或选区后再试。`)
+      const requestImages = [...attachmentImages, ...notebookImages]
       const annotationContext = annotations.filter((annotation): annotation is TextAnnotation => annotation.type === 'text' && Boolean(annotation.text.trim())).map((annotation) => `[第 ${annotation.page} 页批注]\n${annotation.text.trim()}`).join('\n\n')
-      const currentSourceExtras = targetIsGeneral || (targetIsNotebook && !notebookAreas.some((area) => area.id === activeWorkAreaId)) ? '' : annotationContext
+      const currentSourceExtras = targetIsDocument && !(targetIsNotebook && !notebookAreas.some((area) => area.id === activeWorkAreaId)) ? annotationContext : ''
       const notebookImageMap = notebookImageSources.map((area, index) => `附件图像 ${index + 1} 对应来源：${safeSourceLabel(area.source.name)}`).join('\n')
       const temporaryAttachmentNotice = preparedAttachments.length ? '【附件范围】以下材料仅属于当前对话，不是项目来源；回答时请明确称为“对话附件”。' : ''
       if (requestImages.length && aiConfig.provider === 'openai-compatible' && !aiConfig.visionEnabled) throw new Error('当前兼容模型未启用图片识别。请在 AI 设置中启用视觉模型，或切换到 ChatGPT Plus / Codex。')
@@ -1697,6 +1797,26 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
     queuePageJump(page, target.source.url)
   }
 
+  const jumpToHistoryPage = (sourceName: string | undefined, page: number) => {
+    if (sourceName) {
+      const target = workAreas.find((area) => area.projectId === activeProjectId && safeSourceLabel(area.source.name) === safeSourceLabel(sourceName))
+      if (target) {
+        if (target.id !== activeWorkAreaId) openWorkArea(target.id)
+        pendingPageRestoreRef.current = page
+        queuePageJump(page, target.source.url)
+        return
+      }
+    }
+    jumpToPage(page)
+  }
+
+  const confirmDeletion = () => {
+    if (!deleteConfirmation) return
+    if (deleteConfirmation.kind === 'conversation') deleteConversation(deleteConfirmation.id)
+    else deleteMessage(deleteConfirmation.id)
+    setDeleteConfirmation(null)
+  }
+
   const addTextToAi = (text: string) => {
     const selectionId = makeId()
     setSelections((items) => { const next = [...items, { id: selectionId, image: '', images: [], page: currentPage, regions: [], text, textParts: [text], loading: false }]; selectionsRef.current = next; return next })
@@ -1770,6 +1890,7 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
 
   const activeProjectAreas = workAreas.filter((area) => area.projectId === activeProjectId)
   const activeConversation = conversations.find((conversation) => conversation.id === activeConversationId)
+  const reusableConversationAttachments = conversationAttachments.filter((attachment) => attachment.origin !== 'selection')
   const activeConversationSourceKeys = activeConversation?.sourceMemoryKeys
   const selectedProjectAreas = activeConversationSourceKeys
     ? activeProjectAreas.filter((area) => activeConversationSourceKeys.includes(area.memoryKey))
@@ -1835,25 +1956,56 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
     onAddSources={(projectId, files) => { void addSourcesToProject(projectId, files) }}
     onCreateConversation={createConversation}
     onOpenConversation={openConversation}
-    onDeleteConversation={deleteConversation}
+    onDeleteConversation={(conversationId) => { const conversation = conversations.find((item) => item.id === conversationId); setDeleteConfirmation({ kind: 'conversation', id: conversationId, label: conversation?.title || '未命名对话' }) }}
   />
 
   const selectionHasImages = selections.some((selection) => selection.images.length > 0)
+  const selectionTextItems = selections.filter((selection) => !selection.images.length && selection.text.trim())
   const selectionContent = <div className="selection-panel-body single" ref={selectionBodyRef}><section className="selection-content-section">
     <div className="section-label"><span>{t('selectedContent')} · {selections.length}</span>{selections.length > 0 && <button onClick={() => { selectionsRef.current = []; setSelections([]); setSelectedText('') }}><X size={14} /> {t('clear')}</button>}</div>
-    {selections.length === 0 ? <div className="selection-empty"><MousePointer2 size={22} /></div> : <div className={`selection-result-split ${selectionHasImages ? 'with-images' : 'text-only'}`} ref={selectionSplitRef} style={selectionHasImages ? { gridTemplateRows: `minmax(72px, ${selectionSplitRatio}fr) 7px minmax(72px, ${1 - selectionSplitRatio}fr)` } : undefined}>{selectionHasImages && <div className="selection-image-pane" ref={selectionImagesRef}><div className="selection-strip">{selections.flatMap((selection) => selection.images.map((image, imageIndex) => <div className="selection-thumb" key={`${selection.id}-${imageIndex}`}><img src={image} alt="选区预览" />{selection.loading && <span><LoaderCircle className="spin" size={10} /></span>}<button className="remove-selection-image" onClick={() => removeSelectionImage(selection.id, imageIndex)}><X size={11} /></button></div>))}</div></div>}{selectionHasImages && <div className="section-resizer" role="separator" aria-label="调整选区图片与识别文字高度" aria-orientation="horizontal" title="拖动调整图片与识别文字高度" onPointerDown={startSelectionSplit} onPointerMove={moveSelectionSplit} onPointerUp={stopSelectionSplit} onPointerCancel={stopSelectionSplit} />}{busy === 'ocr' ? <div className="inline-loading selection-text-pane"><LoaderCircle className="spin" size={16} /> {progress}</div> : <textarea className="selection-text-pane" ref={selectionTextRef} value={selectedText} onChange={(e) => setSelectedText(e.target.value)} />}</div>}
+    {selections.length === 0 ? <div className="selection-empty"><MousePointer2 size={22} /></div> : <div className="selection-visual-results">{selectionHasImages && <div className="selection-image-pane" ref={selectionImagesRef}><div className="selection-strip">{selections.flatMap((selection) => selection.images.map((image, imageIndex) => <div className="selection-thumb" key={`${selection.id}-${imageIndex}`}><img src={image} alt="选区预览" /><button className="remove-selection-image" onClick={() => removeSelectionImage(selection.id, imageIndex)}><X size={11} /></button></div>))}</div><p className="selection-visual-hint">区域选取会作为图片发送，不会自动转成文字。</p></div>}{selectionTextItems.length > 0 && <div className="selection-text-list">{selectionTextItems.map((selection) => <p key={selection.id}>{selection.text}</p>)}</div>}</div>}
   </section></div>
 
   const chatContent = <div className="chat-panel-layout">
     <section className="ai-fixed-controls">
-      <div className="context-status-bar" title={contextStatusTitle}><strong>{contextStatus}</strong>{conversationAttachments.length + pendingChatAttachments.length > 0 && <span>对话附件 {conversationAttachments.length + pendingChatAttachments.length}</span>}<span>{aiConfig.provider !== 'openai-compatible' && aiConfig.webSearchEnabled ? '联网开启' : '联网关闭'}</span></div>
+      <div className="context-status-bar" title={contextStatusTitle}><strong>{contextStatus}</strong>{reusableConversationAttachments.length + pendingChatAttachments.length > 0 && <span>对话附件 {reusableConversationAttachments.length + pendingChatAttachments.length}</span>}<span>{aiConfig.provider !== 'openai-compatible' && aiConfig.webSearchEnabled ? '联网开启' : '联网关闭'}</span></div>
       <div className="scope-switch" role="group" aria-label="AI 处理范围"><button className={scope === 'general' ? 'active' : ''} onClick={() => setScope('general')} title="不读取选区、当前来源或项目文件；仍会延续对话并使用你主动添加的附件">{t('generalScope')}</button><button className={scope === 'selection' ? 'active' : ''} onClick={() => setScope('selection')}>{t('selectedScope')}{selections.length > 0 && <span>{selections.length}</span>}</button><button className={scope === 'document' ? 'active' : ''} onClick={() => setScope('document')}>当前来源</button><button className={scope === 'notebook' ? 'active' : ''} onClick={() => setScope('notebook')}>项目来源 <span>{selectedProjectAreas.length}/{activeProjectAreas.length}</span></button></div>
       {scope === 'general'
         ? <div className="scope-action-hint">自由提问请直接在下方输入问题；需要翻译、解释、洞察或总结资料时，请切换到选区、当前来源或项目来源。</div>
         : <div className="action-grid"><button disabled={!!busy || currentAiBusy || materialActionsUnavailable} title={materialActionsUnavailable ? '请先选择可用内容' : undefined} onClick={() => runAi('translate')}><Languages /><span>{t('translate')}</span></button><button disabled={!!busy || currentAiBusy || materialActionsUnavailable} title={materialActionsUnavailable ? '请先选择可用内容' : undefined} onClick={() => runAi('explain')}><MessageSquareText /><span>{t('explain')}</span></button><button disabled={!!busy || currentAiBusy || materialActionsUnavailable} title={materialActionsUnavailable ? '请先选择可用内容' : undefined} onClick={() => runAi('insight')}><Lightbulb /><span>{t('insight')}</span></button><button disabled={!!busy || currentAiBusy || materialActionsUnavailable} title={materialActionsUnavailable ? '请先选择可用内容' : undefined} onClick={() => runAi('summarize')}><FileText /><span>{t('summarize')}</span></button></div>}
     </section>
-    <div className="panel-scroll" ref={panelScrollRef}><section className="conversation">{history.map((message) => message.role === 'user' ? <div className="user-event" key={message.id}><span>{message.label}</span><small>{message.content.slice(0, 80)}{message.content.length > 80 ? '…' : ''}</small>{Boolean(message.attachments?.length) && <div className="user-event-attachments">{message.attachments!.map((attachment) => <em key={attachment.id}>{attachment.kind === 'image' ? '图片' : attachment.kind === 'pdf' ? 'PDF' : '文件'} · {attachment.name}</em>)}</div>}<button className="delete-message" onClick={() => deleteMessage(message.id)}><X size={12} /></button></div> : <article className={`answer-card ${message.streaming ? 'streaming' : ''}`} key={message.id}><div className="answer-heading"><span><Sparkles size={15} /> {message.label || t('aiAnalysis')}</span><div><button onClick={() => navigator.clipboard.writeText(message.content)} title={t('copy')}><Copy size={14} /></button><button onClick={() => deleteMessage(message.id)}><X size={14} /></button></div></div><div className="markdown"><ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]} urlTransform={(url) => url.startsWith('page:') || url.startsWith('source:') ? url : defaultUrlTransform(url)} components={{ a: ({ href, children }) => href?.startsWith('page:') ? <button className="citation-page-link" onClick={() => jumpToPage(Number(href.slice(5)))}>{children}</button> : href?.startsWith('source:') ? <button className="citation-page-link source-citation-link" onClick={() => jumpToSourcePage(href)}>{children}</button> : <a href={href} target="_blank" rel="noreferrer">{children}</a> }}>{normalizeAssistantMarkdown(message.content)}</ReactMarkdown>{message.streaming && <span className="stream-cursor" aria-label="正在生成" />}</div></article>)}{currentAiBusy && <div className="thinking"><LoaderCircle className="spin" size={18} /><span>{progress || t('thinking')}</span><button onClick={stopAi}><Square size={13} />停止</button></div>}<div ref={resultsEndRef} /></section>{error && <div className="error-banner"><X size={15} /><span>{error}</span></div>}</div>
-    <div className="prompt-area"><div className="prompt-height-resizer" onPointerDown={startPromptResize} role="separator" aria-orientation="horizontal" />{((aiConfig.provider === 'codex' && !codexConnected) || (aiConfig.provider !== 'codex' && !aiConfig.apiKey && !configured)) && <button className="config-warning" onClick={openSettings}>{t('notConfigured')}</button>}{skillSuggestions.length > 0 && <div className="skill-command-menu">{skillSuggestions.map((skill) => <button key={skill.id} onClick={() => setCustomPrompt(`/${skill.command} `)}><Puzzle size={14} /><span><strong>/{skill.command}</strong><small>{skill.name}</small></span></button>)}</div>}{conversationAttachments.length > 0 && <div className="conversation-attachment-context"><strong>本对话附件</strong><div>{conversationAttachments.map((attachment) => <span key={attachment.id} title={`${attachment.name} · ${formatFileSize(attachment.size)}`}>{attachment.kind === 'image' && attachment.previewUrl ? <img src={attachment.previewUrl} alt="" /> : <FileText size={12} />}<i>{attachment.name}</i><button type="button" onClick={() => removeConversationAttachment(attachment.id)} title="从本对话移除"><X size={11} /></button></span>)}</div></div>}{pendingChatAttachments.length > 0 && <div className="pending-chat-attachments"><strong>待发送 · 不加入项目</strong><div>{pendingChatAttachments.map((attachment) => <span key={attachment.id} title={`${attachment.name} · ${formatFileSize(attachment.size)}`}>{attachment.kind === 'image' && attachment.previewUrl ? <img src={attachment.previewUrl} alt="" /> : <FileText size={12} />}<i>{attachment.name}</i><button type="button" onClick={() => removePendingChatAttachment(attachment.id)} title="移除附件"><X size={11} /></button></span>)}</div></div>}<div className="prompt-box" style={{ height: promptHeight }}><label className="prompt-attachment-button" title="添加仅当前对话使用的图片或文件"><Paperclip size={16} /><input hidden multiple type="file" accept={chatAttachmentAccept} onChange={(event) => { addChatAttachments(Array.from(event.target.files || [])); event.target.value = '' }} /></label><textarea value={customPrompt} onChange={(e) => setCustomPrompt(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (customPrompt.trim()) runAi('custom', customPrompt.trim()) } }} placeholder={!source && (conversationAttachments.length || pendingChatAttachments.length) ? '针对本对话附件提问…' : scope === 'general' ? t('promptGeneral') : scope === 'notebook' ? '针对全部来源提问；需要最新资料时会联网搜索…' : scope === 'document' ? t('promptDocument') : t('promptSelection')} /><button disabled={!!busy || currentAiBusy || !customPrompt.trim()} onClick={() => runAi('custom', customPrompt.trim())}><Send size={17} /></button></div><small className="prompt-hint"><label className="reasoning-switch"><input type="checkbox" checked={deepThinking && reasoningAvailable} disabled={!reasoningAvailable} onChange={(event) => setDeepThinking(event.target.checked)} /><span className="switch-track"><i /></span><Sparkles size={12} />{t('deepThinking')}</label><span>{aiConfig.provider === 'codex' && aiConfig.webSearchEnabled ? '联网搜索已启用 · ' : ''}附件仅属于当前对话 · {t('sendHint')} · <button onClick={() => setCustomPrompt('/')}>{t('chooseSkillHint')}</button></span></small></div>
+    <div className="panel-scroll" ref={panelScrollRef}>
+      <section className="conversation">
+        {history.map((message) => message.role === 'user' ? <div className="user-event" key={message.id}>
+          <span>{message.label}</span>
+          <small>{message.content.slice(0, 80)}{message.content.length > 80 ? '…' : ''}</small>
+          {Boolean(message.attachments?.length) && <div className="user-event-attachments">{message.attachments!.map((attachment) => {
+            const runtimeAttachment = conversationAttachments.find((item) => item.id === attachment.id)
+            if (attachment.kind === 'image' && runtimeAttachment?.previewUrl) return <figure key={attachment.id}>
+              <button type="button" className="history-image-open" title="点击查看大图" onClick={() => setImagePreview({ url: runtimeAttachment.previewUrl, name: attachment.name, page: attachment.page, sourceName: message.contextSnapshot?.sourceNames[0] })}><img src={runtimeAttachment.previewUrl} alt={attachment.origin === 'selection' ? '选区图片' : attachment.name} /></button>
+              <figcaption>{attachment.origin === 'selection' && attachment.page ? <button type="button" onClick={() => jumpToHistoryPage(message.contextSnapshot?.sourceNames[0], attachment.page!)}>选区·第 {attachment.page} 页</button> : attachment.name}</figcaption>
+            </figure>
+            return <em key={attachment.id}><FileText size={11} />{attachment.kind === 'pdf' ? 'PDF' : '文件'} · {attachment.name}</em>
+          })}</div>}
+          <button className="delete-message" title="删除这轮对话" onClick={() => setDeleteConfirmation({ kind: 'message', id: message.id, label: message.label || message.content.slice(0, 32) })}><X size={12} /></button>
+        </div> : <article className={`answer-card ${message.streaming ? 'streaming' : ''}`} key={message.id}>
+          <div className="answer-heading"><span><Sparkles size={15} /> {message.label || t('aiAnalysis')}</span><div><button onClick={() => navigator.clipboard.writeText(message.content)} title={t('copy')}><Copy size={14} /></button><button title="删除这轮对话" onClick={() => setDeleteConfirmation({ kind: 'message', id: message.id, label: message.label || message.content.slice(0, 32) })}><X size={14} /></button></div></div>
+          <div className="markdown"><ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]} urlTransform={(url) => url.startsWith('page:') || url.startsWith('source:') ? url : defaultUrlTransform(url)} components={{ a: ({ href, children }) => href?.startsWith('page:') ? <button className="citation-page-link" onClick={() => jumpToPage(Number(href.slice(5)))}>{children}</button> : href?.startsWith('source:') ? <button className="citation-page-link source-citation-link" onClick={() => jumpToSourcePage(href)}>{children}</button> : <a href={href} target="_blank" rel="noreferrer">{children}</a> }}>{normalizeAssistantMarkdown(message.content)}</ReactMarkdown>{message.streaming && <span className="stream-cursor" aria-label="正在生成" />}</div>
+        </article>)}
+        {currentAiBusy && <div className="thinking"><LoaderCircle className="spin" size={18} /><span>{progress || t('thinking')}</span><button onClick={stopAi}><Square size={13} />停止</button></div>}
+        <div ref={resultsEndRef} />
+      </section>
+      {error && <div className="error-banner"><X size={15} /><span>{error}</span></div>}
+    </div>
+    <div className="prompt-area">
+      <div className="prompt-height-resizer" onPointerDown={startPromptResize} role="separator" aria-orientation="horizontal" />
+      {((aiConfig.provider === 'codex' && !codexConnected) || (aiConfig.provider !== 'codex' && !aiConfig.apiKey && !configured)) && <button className="config-warning" onClick={openSettings}>{t('notConfigured')}</button>}
+      {skillSuggestions.length > 0 && <div className="skill-command-menu">{skillSuggestions.map((skill) => <button key={skill.id} onClick={() => setCustomPrompt(`/${skill.command} `)}><Puzzle size={14} /><span><strong>/{skill.command}</strong><small>{skill.name}</small></span></button>)}</div>}
+      {reusableConversationAttachments.length > 0 && <div className="conversation-attachment-context"><strong>本对话附件</strong><div>{reusableConversationAttachments.map((attachment) => <span key={attachment.id} title={`${attachment.name} · ${formatFileSize(attachment.size)}`}>{attachment.kind === 'image' && attachment.previewUrl ? <img src={attachment.previewUrl} alt="" /> : <FileText size={12} />}<i>{attachment.name}</i><button type="button" onClick={() => removeConversationAttachment(attachment.id)} title="从本对话移除"><X size={11} /></button></span>)}</div></div>}
+      {pendingChatAttachments.length > 0 && <div className="pending-chat-attachments"><strong>待发送 · 不加入项目</strong><div>{pendingChatAttachments.map((attachment) => <span key={attachment.id} title={`${attachment.name} · ${formatFileSize(attachment.size)}`}>{attachment.kind === 'image' && attachment.previewUrl ? <img src={attachment.previewUrl} alt="" /> : <FileText size={12} />}<i>{attachment.name}</i><button type="button" onClick={() => removePendingChatAttachment(attachment.id)} title="移除附件"><X size={11} /></button></span>)}</div></div>}
+      <div className="prompt-box" style={{ height: promptHeight }}><label className="prompt-attachment-button" title="添加仅当前对话使用的图片或文件"><Paperclip size={16} /><input hidden multiple type="file" accept={chatAttachmentAccept} onChange={(event) => { addChatAttachments(Array.from(event.target.files || [])); event.target.value = '' }} /></label><textarea value={customPrompt} onChange={(e) => setCustomPrompt(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (customPrompt.trim()) runAi('custom', customPrompt.trim()) } }} placeholder={!source && (reusableConversationAttachments.length || pendingChatAttachments.length) ? '针对本对话附件提问…' : scope === 'general' ? t('promptGeneral') : scope === 'notebook' ? '针对全部来源提问；需要最新资料时会联网搜索…' : scope === 'document' ? t('promptDocument') : t('promptSelection')} /><button disabled={!!busy || currentAiBusy || !customPrompt.trim()} onClick={() => runAi('custom', customPrompt.trim())}><Send size={17} /></button></div>
+      <small className="prompt-hint"><label className="reasoning-switch"><input type="checkbox" checked={deepThinking && reasoningAvailable} disabled={!reasoningAvailable} onChange={(event) => setDeepThinking(event.target.checked)} /><span className="switch-track"><i /></span><Sparkles size={12} />{t('deepThinking')}</label><span>{aiConfig.provider === 'codex' && aiConfig.webSearchEnabled ? '联网搜索已启用 · ' : ''}附件仅属于当前对话 · {t('sendHint')} · <button onClick={() => setCustomPrompt('/')}>{t('chooseSkillHint')}</button></span></small>
+    </div>
   </div>
 
   const generateStudioOutput = (_title: string, instruction: string) => {
@@ -1920,7 +2072,7 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
             </div>
             <div className="reader-scroll" ref={readerScrollRef} onScroll={onReaderScroll} onWheel={onReaderWheel}>{source.kind === 'text'
               ? <article className="text-source-view"><header>{source.name}</header><pre>{documentText.replace(/^\[第 1 页\]\s*/, '')}</pre></article>
-              : <DocumentViewer key={source.url} source={source} zoom={zoom} currentPage={currentPage} inverted={dark} areaSelectionEnabled={areaSelectionEnabled} onPdfReady={onPdfReady} onSelect={onSelect} onTextAi={addTextToAi} onTextTranslate={translateTextInline} highlights={highlights} onHighlight={toggleHighlight} annotationMode={annotationMode} annotationTool={annotationTool} annotationColor={annotationColor} annotations={annotations} onAnnotationsChange={setAnnotations} />}</div>
+              : <DocumentViewer key={source.url} source={source} zoom={zoom} currentPage={currentPage} inverted={dark} areaSelectionEnabled={areaSelectionEnabled} onPdfReady={onPdfReady} onSelect={onSelect} onTextAi={addTextToAi} onTextTranslate={translateTextInline} ocrPages={ocrPages} onNeedOcrPage={requestVisibleOcrPage} highlights={highlights} onHighlight={toggleHighlight} annotationMode={annotationMode} annotationTool={annotationTool} annotationColor={annotationColor} annotations={annotations} onAnnotationsChange={setAnnotations} />}</div>
           </>}</section>
         {rightPanelIds.length > 0 && <div className="dock-column dock-column-right"><div className="panel-resizer left" onPointerDown={(event) => startResize('right', rightDockWidth, event)} />{renderDockPanels(rightPanelIds)}</div>}
         {floatingPanelIds.map(renderPanel)}
@@ -1952,6 +2104,8 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
             localStorage.setItem('reading-assistant-ai-config', JSON.stringify(config))
           }}
         />}
+      {imagePreview && <div className="image-preview-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && setImagePreview(null)}><section className="image-preview-dialog" role="dialog" aria-modal="true" aria-label="图片预览"><header><strong>{imagePreview.name}</strong><button type="button" onClick={() => setImagePreview(null)} aria-label="关闭图片预览"><X size={18} /></button></header><div className="image-preview-canvas"><img src={imagePreview.url} alt={imagePreview.name} /></div>{imagePreview.page && <footer><button type="button" className="secondary-button" onClick={() => { jumpToHistoryPage(imagePreview.sourceName, imagePreview.page!); setImagePreview(null) }}>跳转到第 {imagePreview.page} 页</button></footer>}</section></div>}
+      {deleteConfirmation && <div className="project-dialog-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && setDeleteConfirmation(null)}><section className="project-dialog" role="dialog" aria-modal="true" aria-labelledby="delete-confirmation-title"><header><div><strong id="delete-confirmation-title">{deleteConfirmation.kind === 'conversation' ? '删除整个对话？' : '删除这轮对话？'}</strong><small>{deleteConfirmation.kind === 'conversation' ? `将删除“${deleteConfirmation.label}”中的全部消息和附件，且无法撤销。` : '问题、AI 回答以及这轮消息中的选区图片和附件都会一起删除，且无法撤销。'}</small></div><button type="button" onClick={() => setDeleteConfirmation(null)} aria-label="关闭"><X size={16} /></button></header><footer><button type="button" className="secondary-button" onClick={() => setDeleteConfirmation(null)}>取消</button><button type="button" className="danger-button" onClick={confirmDeletion}>确认删除</button></footer></section></div>}
       {projectDialog && <div className="project-dialog-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && setProjectDialog(null)}><section className="project-dialog" role="dialog" aria-modal="true" aria-labelledby="project-dialog-title"><header><div><strong id="project-dialog-title">{projectDialog.mode === 'create' ? '新建项目' : projectDialog.mode === 'rename' ? '重命名项目' : projectDialog.mode === 'delete-source' ? '删除文件' : '删除项目'}</strong><small>{projectDialog.mode === 'delete' ? `将删除“${projectDialog.value}”中的全部来源、对话、笔记与批注。` : projectDialog.mode === 'delete-source' ? `只从当前项目删除“${projectDialog.value}”；项目、其他文件和对话会保留。` : '项目之间的来源、对话和笔记彼此独立。'}</small></div><button type="button" onClick={() => setProjectDialog(null)} aria-label="关闭"><X size={16} /></button></header>{(projectDialog.mode === 'create' || projectDialog.mode === 'rename') && <input autoFocus maxLength={80} value={projectDialog.value} onChange={(event) => setProjectDialog({ ...projectDialog, value: event.target.value })} onKeyDown={(event) => { if (event.key === 'Enter') submitProjectDialog(); if (event.key === 'Escape') setProjectDialog(null) }} placeholder="输入项目名称" />}<footer><button type="button" className="secondary-button" onClick={() => setProjectDialog(null)}>取消</button><button type="button" className={projectDialog.mode === 'delete' || projectDialog.mode === 'delete-source' ? 'danger-button' : 'save-button'} disabled={(projectDialog.mode === 'create' || projectDialog.mode === 'rename') && !projectDialog.value.trim()} onClick={submitProjectDialog}>{projectDialog.mode === 'delete' || projectDialog.mode === 'delete-source' ? '确认删除' : '确认'}</button></footer></section></div>}
     </div>
   )

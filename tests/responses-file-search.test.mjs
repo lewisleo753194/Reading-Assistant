@@ -32,6 +32,8 @@ test('Responses mode uploads the original file and searches only its project vec
     if (request.method === 'POST' && request.url === '/v1/vector_stores') return response.end(JSON.stringify({ id: 'vs_project_a' }))
     if (request.method === 'POST' && request.url === '/v1/files') return response.end(JSON.stringify({ id: 'file_textbook_a' }))
     if (request.method === 'POST' && request.url === '/v1/vector_stores/vs_project_a/files') return response.end(JSON.stringify({ id: 'file_textbook_a', status: 'completed' }))
+    if (request.method === 'DELETE' && request.url === '/v1/files/file_textbook_a') return response.end(JSON.stringify({ id: 'file_textbook_a', deleted: true }))
+    if (request.method === 'DELETE' && request.url === '/v1/vector_stores/vs_project_a') return response.end(JSON.stringify({ id: 'vs_project_a', deleted: true }))
     if (request.method === 'POST' && request.url === '/v1/responses') {
       responseBody = JSON.parse(body.toString('utf8'))
       return response.end(JSON.stringify({
@@ -118,6 +120,18 @@ test('Responses mode uploads the original file and searches only its project vec
     assert.deepEqual(responseBody.tools, [])
     assert.match(responseBody.input.at(-1).content[0].text, /只属于上册的材料/)
     assert.doesNotMatch(responseBody.input.at(-1).content[0].text, /下册\.pdf/)
+
+    const deleteFileResponse = await fetch(`http://127.0.0.1:${raid.port}/api/openai/files/delete`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ aiConfig, fileId: 'file_textbook_a' }),
+    })
+    assert.deepEqual(await deleteFileResponse.json(), { deleted: true, alreadyMissing: false })
+
+    const deleteStoreResponse = await fetch(`http://127.0.0.1:${raid.port}/api/openai/vector-stores/delete`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ aiConfig, vectorStoreId: 'vs_project_a' }),
+    })
+    assert.deepEqual(await deleteStoreResponse.json(), { deleted: true, alreadyMissing: false })
+    assert.ok(requests.some((item) => item.method === 'DELETE' && item.url === '/v1/files/file_textbook_a'))
+    assert.ok(requests.some((item) => item.method === 'DELETE' && item.url === '/v1/vector_stores/vs_project_a'))
   } finally {
     await close(raid.server)
     await close(upstream)

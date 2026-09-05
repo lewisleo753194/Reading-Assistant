@@ -28,8 +28,10 @@ test('page navigation waits for the intended document and commits typed pages', 
     readFile(new URL('../src/App.tsx', import.meta.url), 'utf8'),
     readFile(new URL('../src/components/DocumentViewer.tsx', import.meta.url), 'utf8'),
   ])
-  assert.match(app, /attemptsRemaining = 20/)
+  assert.match(app, /attemptsRemaining = 360/)
   assert.match(app, /stack\?\.dataset\.sourceUrl !== expectedSourceUrl/)
+  assert.match(app, /pendingPageRestoreRef\.current !== null\) return/)
+  assert.match(app, /无法跳转到第 \$\{pageNumber\} 页/)
   assert.match(app, /onBlur=\{commitPageInput\}/)
   assert.match(viewer, /data-source-url=\{source\.url\}/)
 })

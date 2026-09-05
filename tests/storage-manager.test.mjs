@@ -19,6 +19,7 @@ test('storage roots stay on the portable or stable application drive', () => {
   const common = { overrideRoot: '', isPackaged: true, executablePath: 'D:\\Apps\\Raid\\release-2.3.0\\win-unpacked\\Raid.exe', appPath: 'D:\\Apps\\Raid', documentsPath: 'C:\\Users\\reader\\Documents', legacyUserData: 'C:\\Users\\reader\\AppData\\Roaming\\Raid' }
   assert.equal(storageRootCandidates({ ...common, portableExecutableDir: '', isDevelopmentInstance: false })[0], path.resolve('D:\\Apps\\Raid\\RaidData'))
   assert.equal(storageRootCandidates({ ...common, portableExecutableDir: 'E:\\Portable\\Raid', isDevelopmentInstance: false })[0], path.resolve('E:\\Portable\\Raid\\RaidData'))
+  assert.equal(storageRootCandidates({ ...common, portableExecutableDir: 'D:\\Apps\\Raid\\release-2.4.1', isDevelopmentInstance: false })[0], path.resolve('D:\\Apps\\Raid\\RaidData'))
   assert.equal(storageRootCandidates({ ...common, portableExecutableDir: '', isDevelopmentInstance: true })[0], path.resolve('D:\\Apps\\Raid\\RaidData\\Development'))
 })
 

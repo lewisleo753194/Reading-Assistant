@@ -18,18 +18,19 @@
     "node": ">=20"
   },
   "private": true,
-  "version": "2.3.0",
+  "version": "2.4.2",
   "type": "module",
   "main": "electron/main.mjs",
   "scripts": {
     "dev": "concurrently -k \"vite\" \"node --watch server/index.mjs\"",
     "build": "tsc -b && vite build",
-    "test:codex": "node --test tests/codex-app-server.test.mjs tests/ai-compatible-regression.test.mjs tests/responses-file-search.test.mjs tests/project-ui-regression.test.mjs tests/streaming-ui-regression.test.mjs tests/selection-ocr-regression.test.mjs tests/conversation-attachments.test.mjs tests/storage-manager.test.mjs",
+    "test:codex": "node --test tests/codex-app-server.test.mjs tests/ai-compatible-regression.test.mjs tests/responses-file-search.test.mjs tests/project-ui-regression.test.mjs tests/streaming-ui-regression.test.mjs tests/selection-ocr-regression.test.mjs tests/conversation-attachments.test.mjs tests/storage-manager.test.mjs tests/pdf-full-processing-regression.test.mjs",
     "preview": "node server/index.mjs",
     "lint": "eslint .",
     "desktop": "npm run build && electron .",
     "desktop:test": "npm run build && electron . --development-instance",
     "desktop:pack": "npm run build && electron-builder --win nsis",
+    "desktop:portable": "npm run build && electron-builder --win portable --config.win.artifactName=Raid-Portable-${version}.${ext}",
     "desktop:dir": "npm run build && electron-builder --win dir"
   },
   "build": {
@@ -38,7 +39,7 @@
     "asar": true,
     "electronDist": "node_modules/electron/dist",
     "directories": {
-      "output": "release-2.3.0"
+      "output": "release-2.4.2"
     },
     "files": [
       "dist/**/*",
