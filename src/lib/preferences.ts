@@ -50,5 +50,8 @@ export const loadPanelLayouts = (): Record<PanelId, PanelLayout> => {
   const saved = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
     ? parsed as Partial<Record<PanelId, Partial<PanelLayout>>>
     : {}
-  return Object.fromEntries(Object.entries(defaultPanels).map(([id, layout]) => [id, { ...layout, ...(saved[id as PanelId] || {}), dockSize: 1 }])) as Record<PanelId, PanelLayout>
+  const layouts = Object.fromEntries(Object.entries(defaultPanels).map(([id, layout]) => [id, { ...layout, ...(saved[id as PanelId] || {}), dockSize: 1 }])) as Record<PanelId, PanelLayout>
+  if (layouts.selection.open && !layouts.chat.open) layouts.chat = { ...layouts.selection }
+  layouts.selection.open = false
+  return layouts
 }

@@ -171,3 +171,28 @@ test('the original OpenAI-compatible model path still handles models, tests, and
     await close(upstream)
   }
 })
+
+test('GPT-6 and GPT-6.1 compatible requests omit unsupported sampling parameters', async () => {
+  const bodies = []
+  const upstream = http.createServer(async (request, response) => {
+    let body = ''
+    for await (const chunk of request) body += chunk
+    bodies.push(JSON.parse(body))
+    response.setHeader('Content-Type', 'application/json')
+    response.end(JSON.stringify({ choices: [{ message: { content: '模型兼容验证成功' } }] }))
+  })
+  const port = await listen(upstream)
+  const raid = await startServer(0)
+  try {
+    for (const model of ['gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-6.1-sol']) {
+      const response = await fetch(`http://127.0.0.1:${raid.port}/api/ai`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ aiConfig: { provider: 'openai-compatible', apiKey: 'test', baseUrl: `http://127.0.0.1:${port}/v1`, model }, action: 'custom', instruction: '你好', contextMode: 'general' }),
+      })
+      assert.equal(response.ok, true)
+      await response.json()
+      assert.equal(bodies.at(-1).model, model)
+      assert.equal('temperature' in bodies.at(-1), false)
+    }
+  } finally { await close(raid.server); await close(upstream) }
+})

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import type { SelectionResult } from '../types'
 
 type Point = { x: number; y: number }
@@ -7,6 +7,7 @@ type Rect = { left: number; top: number; width: number; height: number }
 type Props = {
   pageNumber: number
   className?: string
+  style?: CSSProperties
   render: (canvas: HTMLCanvasElement) => Promise<void>
   onSelect: (selection: SelectionResult) => void
   selectionEnabled?: boolean
@@ -14,7 +15,7 @@ type Props = {
   overlay?: ReactNode
 }
 
-export default function SelectableCanvas({ pageNumber, className = '', render, onSelect, selectionEnabled = true, inverted = false, overlay }: Props) {
+export default function SelectableCanvas({ pageNumber, className = '', style, render, onSelect, selectionEnabled = true, inverted = false, overlay }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const hasContentRef = useRef(false)
   const startRef = useRef<Point | null>(null)
@@ -129,6 +130,7 @@ export default function SelectableCanvas({ pageNumber, className = '', render, o
     <div
       className={`selectable-page ${selectionEnabled ? 'selection-enabled' : ''} ${inverted ? 'file-inverted' : ''} ${className}`}
       data-page-number={pageNumber}
+      style={style}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}

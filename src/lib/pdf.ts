@@ -10,13 +10,22 @@ GlobalWorkerOptions.workerSrc = workerUrl
 const pdfWasmUrls = [jbig2WasmUrl, openjpegWasmUrl, qcmsWasmUrl, quickjsWasmUrl]
 const absolutePdfWasmUrls = pdfWasmUrls.map((url) => new URL(url, window.location.href))
 const pdfWasmUrl = new URL('.', absolutePdfWasmUrls[0]).href
+const pdfStaticAssetUrl = new URL('pdfjs/', window.location.href)
+const pdfCMapUrl = new URL('cmaps/', pdfStaticAssetUrl).href
+const pdfStandardFontDataUrl = new URL('standard_fonts/', pdfStaticAssetUrl).href
 
 if (!absolutePdfWasmUrls.every((url) => new URL('.', url).href === pdfWasmUrl)) {
   throw new Error('PDF 解码资源未打包到同一目录。')
 }
 
 export async function loadPdf(url: string): Promise<PDFDocumentProxy> {
-  return getDocument({ url, wasmUrl: pdfWasmUrl }).promise
+  return getDocument({
+    url,
+    wasmUrl: pdfWasmUrl,
+    cMapUrl: pdfCMapUrl,
+    cMapPacked: true,
+    standardFontDataUrl: pdfStandardFontDataUrl,
+  }).promise
 }
 
 export async function extractPdfText(pdf: PDFDocumentProxy, onProgress?: (done: number, total: number) => void, maximumCharacters = Number.POSITIVE_INFINITY, signal?: AbortSignal) {

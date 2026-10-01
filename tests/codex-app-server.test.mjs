@@ -29,8 +29,8 @@ test('Codex bridge initializes, reads Plus status, lists models, and returns the
   const deltas = []
   let imagePath = ''
   const spawnImpl = (command, args) => {
-    assert.match(command.toLocaleLowerCase(), /cmd\.exe$/)
-    assert.deepEqual(args, ['/d', '/s', '/c', 'codex app-server'])
+    assert.match(command.toLocaleLowerCase(), /(?:cmd|codex)\.exe$/)
+    assert.deepEqual(args, /cmd\.exe$/i.test(command) ? ['/d', '/s', '/c', 'codex app-server'] : ['app-server'])
     return fakeCodexProcess((message, send) => {
       requests.push(message)
       if (message.method === 'initialize') send({ id: message.id, result: { userAgent: 'fake' } })

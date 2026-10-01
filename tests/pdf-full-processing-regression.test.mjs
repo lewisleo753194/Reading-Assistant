@@ -35,7 +35,9 @@ test('PDF.js packages and configures its WASM image decoders', async () => {
   assert.match(pdf, /pdfjs-dist\/wasm\/qcms_bg\.wasm\?url/)
   assert.match(pdf, /pdfjs-dist\/wasm\/quickjs-eval\.wasm\?url/)
   assert.match(pdf, /new URL\(url, window\.location\.href\)/)
-  assert.match(pdf, /getDocument\(\{ url, wasmUrl: pdfWasmUrl \}\)/)
+  assert.match(pdf, /wasmUrl: pdfWasmUrl/)
+  assert.match(pdf, /cMapUrl: pdfCMapUrl/)
+  assert.match(pdf, /standardFontDataUrl: pdfStandardFontDataUrl/)
   assert.match(vite, /assetInfo\.names\[0\]\?\.endsWith\('\.wasm'\)/)
   assert.match(vite, /assets\/\[name\]\[extname\]/)
 })
@@ -57,10 +59,29 @@ test('PDF and OCR resources are released instead of accumulating across sources'
   assert.match(canvas, /buffer\.width = 0[\s\S]{0,80}buffer\.height = 0/)
 })
 
-test('portable packaging has a dedicated command and release directory', async () => {
+test('2.5.0 packaging has dedicated portable and setup outputs', async () => {
   const packageJson = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
 
-  assert.equal(packageJson.version, '2.4.2')
+  assert.equal(packageJson.version, '2.5.0')
   assert.equal(packageJson.scripts['desktop:portable'], 'npm run build && electron-builder --win portable --config.win.artifactName=Raid-Portable-${version}.${ext}')
-  assert.equal(packageJson.build.directories.output, 'release-2.4.2')
+  assert.equal(packageJson.scripts['desktop:pack'], 'npm run build && electron-builder --win nsis')
+  assert.equal(packageJson.build.directories.output, 'release-2.5.0')
+  assert.equal(packageJson.build.win.artifactName, 'Raid-Setup-${version}.${ext}')
+})
+
+test('Windows main, floating, installer, and shortcut surfaces use the packaged Raid icon', async () => {
+  const [main, packageJson] = await Promise.all([
+    readFile(new URL('../electron/main.mjs', import.meta.url), 'utf8'),
+    readFile(new URL('../package.json', import.meta.url), 'utf8').then(JSON.parse),
+  ])
+
+  assert.match(main, /nativeImage/)
+  assert.match(main, /path\.join\(process\.resourcesPath, process\.platform === 'win32' \? 'app-icon\.ico'/)
+  assert.match(main, /icon: appIconPath/)
+  assert.match(main, /mainWindow\.setIcon\(appIconImage\)/)
+  assert.deepEqual(packageJson.build.extraResources, [{ from: 'electron/app-icon.ico', to: 'app-icon.ico' }])
+  assert.equal(packageJson.build.win.icon, 'electron/app-icon.ico')
+  assert.equal(packageJson.build.nsis.installerIcon, 'electron/app-icon.ico')
+  assert.equal(packageJson.build.nsis.uninstallerIcon, 'electron/app-icon.ico')
+  assert.equal(packageJson.build.nsis.installerHeaderIcon, 'electron/app-icon.ico')
 })

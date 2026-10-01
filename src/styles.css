@@ -140,10 +140,11 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
 .selection-text-list p { margin:0; padding:8px 9px; border:1px solid var(--line); border-radius:7px; background:var(--paper); font-size:10px; line-height:1.55; white-space:pre-wrap; }
 .selection-empty { min-height: 180px; padding: 22px 10px; display: grid; place-items: center; align-content: center; gap: 8px; color: var(--muted); text-align: center; }
 .selection-empty p { margin: 0; font-size: 10px; line-height: 1.6; }
-:is(.selection-panel,.panel-selection) .selection-strip { flex-wrap: wrap; align-content:flex-start; overflow: visible; }
-:is(.selection-panel,.panel-selection) .selection-thumb { width: calc(50% - 4px); position: relative; }
-:is(.selection-panel,.panel-selection) .selection-thumb img { width: 100%; height: 68px; display: block; object-fit: cover; border: 1px solid var(--line); border-radius: 6px; background: white; }
-:root[data-theme='dark'] :is(.selection-panel,.panel-selection) .selection-thumb img { filter: invert(.9) hue-rotate(180deg) brightness(.82) contrast(.9) sepia(.08); }
+:is(.selection-panel,.panel-selection,.chat-selection-context) .selection-strip { flex-wrap: wrap; align-content:flex-start; overflow: visible; }
+:is(.selection-panel,.panel-selection,.chat-selection-context) .selection-thumb { width: calc(50% - 4px); position: relative; }
+:is(.selection-panel,.panel-selection,.chat-selection-context) .selection-thumb img { width: 100%; height: 68px; display: block; object-fit: cover; border: 1px solid var(--line); border-radius: 6px; background: white; }
+.selection-image-open { width:100%; padding:0; display:block; border:0; border-radius:6px; background:transparent; cursor:zoom-in; }
+:root[data-theme='dark'] :is(.selection-panel,.panel-selection,.chat-selection-context) .selection-thumb img { filter: invert(.9) hue-rotate(180deg) brightness(.82) contrast(.9) sepia(.08); }
 .remove-selection-image { position: absolute; z-index: 3; top: 4px; right: 4px; width: 20px; height: 20px; padding: 0; display: grid; place-items: center; border: 1px solid rgba(255,255,255,.55); border-radius: 6px; color: white; background: rgba(18,20,22,.76); box-shadow: 0 2px 8px rgba(0,0,0,.22); cursor: pointer; }
 .remove-selection-image:hover { background: #a53931; }
 .section-resizer { position: relative; z-index: 5; margin: 0 -11px; cursor: row-resize; touch-action: none; }
@@ -216,6 +217,8 @@ button:disabled { opacity: .38; cursor: not-allowed; }
 .markdown th { background: var(--soft); }
 .markdown img { max-width: 100%; }
 .markdown .katex-display { max-width: 100%; overflow-x: auto; overflow-y: hidden; padding: 3px 0; }
+.markdown .katex :is(.fbox,.fcolorbox) { border: 0 !important; }
+.markdown .katex .boxpad { padding: 0; }
 .error-banner { margin-top: 10px; padding: 9px 10px; display: flex; align-items: flex-start; gap: 7px; color: #a53931; background: #fff0ee; border: 1px solid #efc3bf; border-radius: 8px; font-size: 11px; line-height: 1.45; }
 :root[data-theme='dark'] .error-banner { background: #3a1d1b; border-color: #63302c; color: #ffaaa3; }
 .prompt-area { position: relative; flex: none; padding: 10px 16px 13px; border-top: 1px solid var(--line); background: var(--panel); }
@@ -445,3 +448,10 @@ button:disabled { opacity: .38; cursor: not-allowed; }
 @keyframes stream-cursor-blink { 50% { opacity:.2; } }
 @keyframes pulse { 0%,100% { opacity:.35; transform:scale(.85); } 50% { opacity:1; transform:scale(1); } }
 @media(max-width:760px){.modern-shell>.workspace{grid-template-columns:0 minmax(280px,1fr) 0}.dock-column{position:absolute;top:0;bottom:0;width:min(82vw,380px);z-index:25}.dock-column-right{right:0}.dock-column-left{left:0}}
+
+/* Stable PDF geometry prevents virtualized pages from moving the viewport. */
+.document-stack > .selectable-page { flex: none; }
+.reader-scroll { overflow-anchor: none; }
+.chat-selection-context { flex: none; max-height: min(220px, 28%); overflow: auto; border-top: 1px solid var(--line); }
+.chat-selection-context .selection-panel-body.single, .chat-selection-context .selection-panel-body.single .selection-content-section { height: auto; }
+.chat-selection-context .selection-visual-results { flex: none; overflow: visible; }

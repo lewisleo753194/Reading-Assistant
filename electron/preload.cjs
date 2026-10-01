@@ -7,4 +7,5 @@ contextBridge.exposeInMainWorld('readingAssistant', {
   preparePanelDrag: () => ipcRenderer.send('reading-assistant:prepare-panel-drag'),
   setPanelDragging: (active) => ipcRenderer.send('reading-assistant:set-panel-dragging', { active }),
   setDockZones: (visible, active, dark) => ipcRenderer.send('reading-assistant:set-dock-zones', { visible, active, dark }),
+  setModalOverlayActive: (active) => ipcRenderer.send('reading-assistant:set-modal-overlay-active', { active }),
 })

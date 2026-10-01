@@ -10,6 +10,7 @@ import SelectableCanvas from './SelectableCanvas'
 import AnnotationLayer from './AnnotationLayer'
 import type { AnnotationTool, DocumentAnnotation, DocumentHighlight, OcrPage, SelectionResult, SourceFile, TextAnnotation } from '../types'
 import { loadPdf } from '../lib/pdf'
+import { loadPageSizes, scalePageSize, type PageSize } from '../lib/pdf-layout'
 import { useI18n } from '../i18n'
 
 type Props = {
@@ -35,7 +36,7 @@ type Props = {
 
 type AnnotationPageProps = Pick<Props, 'annotationMode' | 'annotationTool' | 'annotationColor' | 'annotations' | 'onAnnotationsChange'>
 
-function PdfPage({ pdf, pageNumber, zoom, inverted, textSelectionEnabled, highlights, ocrPage, onNeedOcrPage, ...annotationProps }: { pdf: PDFDocumentProxy; pageNumber: number; zoom: number; inverted: boolean; textSelectionEnabled: boolean; highlights: DocumentHighlight[]; ocrPage?: OcrPage; onNeedOcrPage: (pageNumber: number) => void } & AnnotationPageProps) {
+function PdfPage({ pdf, pageNumber, size, zoom, inverted, textSelectionEnabled, highlights, ocrPage, onNeedOcrPage, ...annotationProps }: { pdf: PDFDocumentProxy; pageNumber: number; size: PageSize; zoom: number; inverted: boolean; textSelectionEnabled: boolean; highlights: DocumentHighlight[]; ocrPage?: OcrPage; onNeedOcrPage: (pageNumber: number) => void } & AnnotationPageProps) {
   const textLayerRef = useRef<HTMLDivElement>(null)
   const render = useCallback(async (canvas: HTMLCanvasElement) => {
     const page = await pdf.getPage(pageNumber)
@@ -99,7 +100,7 @@ function PdfPage({ pdf, pageNumber, zoom, inverted, textSelectionEnabled, highli
   }, [pdf, pageNumber, textSelectionEnabled, zoom, highlights, ocrPage, onNeedOcrPage])
 
   const pageRegions = highlights.flatMap((highlight) => (highlight.regions || []).filter((item) => item.page === pageNumber).map((item) => ({ ...item.region, color: highlight.color })))
-  return <SelectableCanvas pageNumber={pageNumber} render={render} onSelect={() => undefined} selectionEnabled={false} inverted={inverted} overlay={<><div className="saved-highlight-layer">{pageRegions.map((region, index) => <i key={index} style={{ left: `${region.left * 100}%`, top: `${region.top * 100}%`, width: `${region.width * 100}%`, height: `${region.height * 100}%`, background: region.color }} />)}</div><div ref={textLayerRef} className={`text-layer ${textSelectionEnabled ? 'enabled' : ''}`} /><AnnotationLayer pageNumber={pageNumber} active={annotationProps.annotationMode} tool={annotationProps.annotationTool} color={annotationProps.annotationColor} annotations={annotationProps.annotations} onChange={annotationProps.onAnnotationsChange} /></>} />
+  return <SelectableCanvas pageNumber={pageNumber} style={size} render={render} onSelect={() => undefined} selectionEnabled={false} inverted={inverted} overlay={<><div className="saved-highlight-layer">{pageRegions.map((region, index) => <i key={index} style={{ left: `${region.left * 100}%`, top: `${region.top * 100}%`, width: `${region.width * 100}%`, height: `${region.height * 100}%`, background: region.color }} />)}</div><div ref={textLayerRef} className={`text-layer ${textSelectionEnabled ? 'enabled' : ''}`} /><AnnotationLayer pageNumber={pageNumber} active={annotationProps.annotationMode} tool={annotationProps.annotationTool} color={annotationProps.annotationColor} annotations={annotationProps.annotations} onChange={annotationProps.onAnnotationsChange} /></>} />
 }
 
 function ImagePage({ source, zoom, inverted, ...annotationProps }: { source: SourceFile; zoom: number; inverted: boolean } & AnnotationPageProps) {
@@ -118,6 +119,20 @@ function ImagePage({ source, zoom, inverted, ...annotationProps }: { source: Sou
 const contextSafe = (canvas: HTMLCanvasElement) => canvas.getContext('2d')
 
 type SelectionRect = { left: number; top: number; width: number; height: number }
+
+const splitTallSelection = (region: SelectionRect, renderedWidth: number, renderedHeight: number) => {
+  const pixelWidth = region.width * renderedWidth
+  const pixelHeight = region.height * renderedHeight
+  const tileCount = Math.max(1, Math.ceil(pixelHeight / Math.max(1, pixelWidth * 2.6)))
+  if (tileCount === 1) return [region]
+  const tileHeight = region.height / tileCount
+  const overlap = tileHeight * .04
+  return Array.from({ length: tileCount }, (_, index) => {
+    const top = region.top + index * tileHeight - (index ? overlap : 0)
+    const bottom = region.top + (index + 1) * tileHeight + (index + 1 < tileCount ? overlap : 0)
+    return { ...region, top, height: bottom - top }
+  })
+}
 
 function drawAnnotationsIntoCrop(context: CanvasRenderingContext2D, pageAnnotations: DocumentAnnotation[], region: SelectionRect, width: number, height: number) {
   const x = (value: number) => (value - region.left) / region.width * width
@@ -148,6 +163,7 @@ function drawAnnotationsIntoCrop(context: CanvasRenderingContext2D, pageAnnotati
 export default function DocumentViewer({ source, zoom, currentPage, inverted, areaSelectionEnabled, onPdfReady, onSelect, onTextAi, onTextTranslate, ocrPages, onNeedOcrPage, highlights, onHighlight, annotationMode, annotationTool, annotationColor, annotations, onAnnotationsChange }: Props) {
   const { t, pack } = useI18n()
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null)
+  const [pageSizes, setPageSizes] = useState<Record<number, PageSize>>({})
   const [error, setError] = useState('')
   const [selectionRect, setSelectionRect] = useState<SelectionRect | null>(null)
   const stackRef = useRef<HTMLDivElement>(null)
@@ -155,6 +171,7 @@ export default function DocumentViewer({ source, zoom, currentPage, inverted, ar
   const rectRef = useRef<SelectionRect | null>(null)
   const lastPointerRef = useRef<{ x: number; y: number } | null>(null)
   const autoScrollFrameRef = useRef<number | null>(null)
+  const finishingSelectionRef = useRef(false)
   const [textAction, setTextAction] = useState<{ text: string; left: number; top: number; regions: SelectionResult['regions'] } | null>(null)
   const [translation, setTranslation] = useState('')
   const [translating, setTranslating] = useState(false)
@@ -168,9 +185,12 @@ export default function DocumentViewer({ source, zoom, currentPage, inverted, ar
     let active = true
     let document: PDFDocumentProxy | null = null
     void loadPdf(source.url)
-      .then((loadedDocument) => {
+      .then(async (loadedDocument) => {
         document = loadedDocument
         if (!active) return loadedDocument.loadingTask.destroy()
+        const sizes = await loadPageSizes(loadedDocument, () => active)
+        if (!sizes || !active) return
+        setPageSizes(sizes)
         setPdf(loadedDocument)
         onPdfReady(loadedDocument)
       })
@@ -274,7 +294,8 @@ export default function DocumentViewer({ source, zoom, currentPage, inverted, ar
     runAutoScroll()
   }
 
-  const finishSelection = () => {
+  const finishSelection = async () => {
+    if (finishingSelectionRef.current) return
     stopAutoScroll()
     const stack = stackRef.current
     const rect = rectRef.current
@@ -285,11 +306,8 @@ export default function DocumentViewer({ source, zoom, currentPage, inverted, ar
     if (!stack || !rect || rect.width < 8 || rect.height < 8) return
 
     const stackBounds = stack.getBoundingClientRect()
-    const images: string[] = []
-    const regions: SelectionResult['regions'] = []
-    stack.querySelectorAll<HTMLElement>('.selectable-page').forEach((pageElement) => {
-      const canvas = pageElement.querySelector('canvas')
-      if (!canvas) return
+    const selectedRegions: Array<{ page: number; region: SelectionRect; canvas: HTMLCanvasElement | null }> = []
+    stack.querySelectorAll<HTMLElement>('[data-page-number]').forEach((pageElement) => {
       const bounds = pageElement.getBoundingClientRect()
       const pageBox = {
         left: bounds.left - stackBounds.left,
@@ -313,31 +331,57 @@ export default function DocumentViewer({ source, zoom, currentPage, inverted, ar
         width: (intersection.right - intersection.left) / cssWidth,
         height: (intersection.bottom - intersection.top) / cssHeight,
       }
-      const sourceWidth = Math.max(1, Math.round(relative.width * canvas.width))
-      const sourceHeight = Math.max(1, Math.round(relative.height * canvas.height))
-      const outputScale = Math.min(1, 2600 / Math.max(sourceWidth, sourceHeight))
-      const crop = document.createElement('canvas')
-      crop.width = Math.max(1, Math.round(sourceWidth * outputScale))
-      crop.height = Math.max(1, Math.round(sourceHeight * outputScale))
-      crop.getContext('2d')?.drawImage(
-        canvas,
-        relative.left * canvas.width,
-        relative.top * canvas.height,
-        sourceWidth,
-        sourceHeight,
-        0,
-        0,
-        crop.width,
-        crop.height,
-      )
-      const cropContext = crop.getContext('2d')
-      if (cropContext) drawAnnotationsIntoCrop(cropContext, annotations.filter((annotation) => annotation.page === Number(pageElement.dataset.pageNumber)), relative, crop.width, crop.height)
-      images.push(crop.toDataURL('image/jpeg', 0.94))
-      regions.push({ page: Number(pageElement.dataset.pageNumber), region: relative })
+      const page = Number(pageElement.dataset.pageNumber)
+      splitTallSelection(relative, cssWidth, cssHeight).forEach((tile) => selectedRegions.push({
+        page,
+        region: tile,
+        canvas: pageElement.querySelector('canvas'),
+      }))
     })
-    if (images.length) {
+    if (!selectedRegions.length) return
+    finishingSelectionRef.current = true
+    try {
+      const images: string[] = []
+      const regions: SelectionResult['regions'] = []
+      for (const selected of selectedRegions) {
+        const crop = document.createElement('canvas')
+        if (source.kind === 'pdf' && pdf) {
+          const page = await pdf.getPage(selected.page)
+          const baseViewport = page.getViewport({ scale: 1 })
+          const regionWidth = Math.max(1, selected.region.width * baseViewport.width)
+          const regionHeight = Math.max(1, selected.region.height * baseViewport.height)
+          const renderScale = Math.min(4, 3200 / Math.max(regionWidth, regionHeight))
+          const viewport = page.getViewport({ scale: renderScale })
+          crop.width = Math.max(1, Math.round(selected.region.width * viewport.width))
+          crop.height = Math.max(1, Math.round(selected.region.height * viewport.height))
+          const context = crop.getContext('2d')
+          if (!context) continue
+          context.fillStyle = '#fff'
+          context.fillRect(0, 0, crop.width, crop.height)
+          await page.render({
+            canvasContext: context,
+            viewport,
+            transform: [1, 0, 0, 1, -selected.region.left * viewport.width, -selected.region.top * viewport.height],
+            canvas: crop,
+          }).promise
+        } else if (selected.canvas) {
+          const sourceWidth = Math.max(1, Math.round(selected.region.width * selected.canvas.width))
+          const sourceHeight = Math.max(1, Math.round(selected.region.height * selected.canvas.height))
+          const outputScale = Math.min(1, 3200 / Math.max(sourceWidth, sourceHeight))
+          crop.width = Math.max(1, Math.round(sourceWidth * outputScale))
+          crop.height = Math.max(1, Math.round(sourceHeight * outputScale))
+          crop.getContext('2d')?.drawImage(selected.canvas, selected.region.left * selected.canvas.width, selected.region.top * selected.canvas.height, sourceWidth, sourceHeight, 0, 0, crop.width, crop.height)
+        } else continue
+        const cropContext = crop.getContext('2d')
+        if (cropContext) drawAnnotationsIntoCrop(cropContext, annotations.filter((annotation) => annotation.page === selected.page), selected.region, crop.width, crop.height)
+        images.push(crop.toDataURL('image/jpeg', 0.94))
+        regions.push({ page: selected.page, region: selected.region })
+      }
+      if (!images.length) return
       const annotationTexts = regions.map(({ page, region }) => annotations.filter((annotation): annotation is TextAnnotation => annotation.type === 'text' && annotation.page === page && annotation.x <= region.left + region.width && annotation.x + annotation.width >= region.left && annotation.y <= region.top + region.height && annotation.y + (annotation.height ?? .1) >= region.top).map((annotation) => annotation.text.trim()).filter(Boolean).join('\n'))
       onSelect({ image: images[0], images, page: regions[0].page, regions, annotationTexts })
+    } finally {
+      finishingSelectionRef.current = false
     }
   }
 
@@ -377,7 +421,7 @@ export default function DocumentViewer({ source, zoom, currentPage, inverted, ar
   const onPointerUp = (event: ReactPointerEvent<HTMLDivElement>) => {
     if ((event.target as HTMLElement).closest('.text-action-popover')) return
     if (annotationMode) return
-    if (areaSelectionEnabled) finishSelection()
+    if (areaSelectionEnabled) void finishSelection()
     else showTextActions()
   }
 
@@ -447,14 +491,15 @@ export default function DocumentViewer({ source, zoom, currentPage, inverted, ar
   </div> : null
 
   return (
-    <div className={`document-stack ${annotationMode ? 'annotation-mode' : areaSelectionEnabled ? 'continuous-selection' : 'text-selection-mode'}`} data-source-url={source.url} ref={stackRef} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={() => areaSelectionEnabled && !annotationMode && finishSelection()}>
+    <div className={`document-stack ${annotationMode ? 'annotation-mode' : areaSelectionEnabled ? 'continuous-selection' : 'text-selection-mode'}`} data-source-url={source.url} ref={stackRef} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={() => { if (areaSelectionEnabled && !annotationMode) void finishSelection() }}>
       {source.kind === 'image'
         ? <ImagePage source={source} zoom={zoom} inverted={inverted} annotationMode={annotationMode} annotationTool={annotationTool} annotationColor={annotationColor} annotations={annotations} onAnnotationsChange={onAnnotationsChange} />
         : pdf && Array.from({ length: pdf.numPages }, (_, index) => {
           const pageNumber = index + 1
+          const size = scalePageSize(pageSizes[pageNumber], zoom)
           return Math.abs(pageNumber - currentPage) <= renderRadius
-            ? <PdfPage key={pageNumber} pdf={pdf} pageNumber={pageNumber} zoom={zoom} inverted={inverted} textSelectionEnabled={!areaSelectionEnabled && !annotationMode} highlights={highlights} ocrPage={ocrPages[String(pageNumber)]} onNeedOcrPage={onNeedOcrPage} annotationMode={annotationMode} annotationTool={annotationTool} annotationColor={annotationColor} annotations={annotations} onAnnotationsChange={onAnnotationsChange} />
-            : <div key={pageNumber} className="pdf-page-placeholder" data-page-number={pageNumber} style={{ width: 500 * zoom, height: 710 * zoom }}><span>{pageNumber}</span></div>
+            ? <PdfPage key={pageNumber} pdf={pdf} pageNumber={pageNumber} size={size} zoom={zoom} inverted={inverted} textSelectionEnabled={!areaSelectionEnabled && !annotationMode} highlights={highlights} ocrPage={ocrPages[String(pageNumber)]} onNeedOcrPage={onNeedOcrPage} annotationMode={annotationMode} annotationTool={annotationTool} annotationColor={annotationColor} annotations={annotations} onAnnotationsChange={onAnnotationsChange} />
+            : <div key={pageNumber} className="pdf-page-placeholder" data-page-number={pageNumber} style={size}><span>{pageNumber}</span></div>
         })}
       {selectionRect && <div className="document-selection-rect" style={selectionRect} />}
       {textActionPopover && createPortal(textActionPopover, document.body)}

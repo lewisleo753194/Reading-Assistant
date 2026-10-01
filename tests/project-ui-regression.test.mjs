@@ -22,6 +22,23 @@ test('message turns and whole conversations require deletion confirmation', asyn
   assert.match(app, /onClick=\{confirmDeletion\}/)
 })
 
+test('native floating panels yield to image previews and confirmation dialogs', async () => {
+  const [app, preload, main, types] = await Promise.all([
+    readFile(new URL('../src/App.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../electron/preload.cjs', import.meta.url), 'utf8'),
+    readFile(new URL('../electron/main.mjs', import.meta.url), 'utf8'),
+    readFile(new URL('../src/types.ts', import.meta.url), 'utf8'),
+  ])
+
+  assert.match(app, /modalOverlayActive = settingsOpen \|\| Boolean\(imagePreview \|\| deleteConfirmation \|\| projectDialog\)/)
+  assert.match(app, /setModalOverlayActive\(modalOverlayActive\)/)
+  assert.match(preload, /reading-assistant:set-modal-overlay-active/)
+  assert.match(types, /setModalOverlayActive: \(active: boolean\) => void/)
+  assert.match(main, /mainWindow\.getChildWindows\(\)/)
+  assert.match(main, /panelWindow\.hide\(\)/)
+  assert.match(main, /panelWindow\.showInactive\(\)/)
+})
+
 test('project action controls are explicit buttons', async () => {
   const explorer = await readFile(new URL('../src/components/ProjectExplorer.tsx', import.meta.url), 'utf8')
   const styles = await readFile(new URL('../src/styles.css', import.meta.url), 'utf8')

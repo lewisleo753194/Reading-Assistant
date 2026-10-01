@@ -32,7 +32,7 @@ const legacyProjectId = 'raid-default-project'
 const textFilePattern = /\.(txt|md|markdown|csv|json|html|xml)$/i
 const chatAttachmentAccept = 'image/*,application/pdf,.txt,.md,.markdown,.csv,.json,.html,.xml'
 const maxConversationAttachments = 8
-const maxConversationImages = 4
+const maxConversationImages = 12
 const maxTemporaryAttachmentCharacters = 160_000
 const safeSourceLabel = (name: string) => name.replace(/[|[\]\r\n】]/g, ' ').trim()
 const getSourceKind = (file: File): SourceFile['kind'] => file.type === 'application/pdf' || /\.pdf$/i.test(file.name)
@@ -196,6 +196,7 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
   const [annotationTool, setAnnotationTool] = useState<AnnotationTool>('ink')
   const [annotationColor, setAnnotationColor] = useState('#2f6fed')
   const [panelLayouts, setPanelLayouts] = useState(() => normalizePanelZ(loadPanelLayouts()))
+  const modalOverlayActive = settingsOpen || Boolean(imagePreview || deleteConfirmation || projectDialog)
   const abortControllersRef = useRef(new Map<string, AbortController>())
   const documentContextPromisesRef = useRef(new Map<string, Promise<string>>())
   const hasVisualSelection = selections.some((item) => item.images.length > 0)
@@ -238,6 +239,11 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
   const vectorStoreIdsRef = useRef(new Map<string, string>())
   const vectorStoreCreationRef = useRef(new Map<string, Promise<string>>())
   const currentConversationRouteId = activeWorkAreaId || (activeProjectId ? `project:${activeProjectId}` : '')
+
+  useEffect(() => {
+    window.readingAssistant?.setModalOverlayActive(modalOverlayActive)
+    return () => window.readingAssistant?.setModalOverlayActive(false)
+  }, [modalOverlayActive])
   const currentAiTaskKey = currentConversationRouteId && activeConversationId ? `${currentConversationRouteId}:${activeConversationId}` : ''
   const currentAiBusy = aiTasks.has(currentAiTaskKey)
   const slashSkillQuery = customPrompt.match(/^\/([^\s]*)$/)?.[1].toLocaleLowerCase()
@@ -546,8 +552,15 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
     const onScroll = () => {
       chatFollowsLatestRef.current = container.scrollHeight - container.scrollTop - container.clientHeight <= 48
     }
+    const onWheel = (event: WheelEvent) => {
+      if (event.deltaY < 0) chatFollowsLatestRef.current = false
+    }
     container.addEventListener('scroll', onScroll, { passive: true })
-    return () => container.removeEventListener('scroll', onScroll)
+    container.addEventListener('wheel', onWheel, { passive: true })
+    return () => {
+      container.removeEventListener('scroll', onScroll)
+      container.removeEventListener('wheel', onWheel)
+    }
   })
 
   const snapshotCurrent = (): WorkArea | null => source && activeWorkAreaId ? {
@@ -1248,6 +1261,7 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
     const captured: CapturedSelection = { ...result, id: selectionId, text: '', textParts: result.images.map(() => ''), loading: false }
     setSelections((items) => { const next = [...items, captured]; selectionsRef.current = next; return next })
     setScope('selection')
+    setPanelLayouts((items) => ({ ...items, chat: { ...items.chat, open: true, z: nextPanelZ(items) } }))
     setError('')
   }
 
@@ -1549,7 +1563,7 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
     // document body. Follow-up questions depend on the exact earlier request.
     const targetText = [effectiveInstruction || implicitRequest, attachmentLine].filter(Boolean).join('\n')
     const turnId = makeId()
-    const requestAnchorPages = source ? (targetIsGeneral || targetIsNotebook ? [] : targetIsDocument ? [currentPage] : Array.from(new Set(selections.flatMap((item) => item.regions.map((region) => region.page)).concat(currentPage)))) : []
+    const requestAnchorPages = source ? (targetIsGeneral || targetIsNotebook ? [] : targetIsDocument ? [currentPage] : Array.from(new Set(selections.flatMap((item) => item.regions.map((region) => region.page))))) : []
     const contextSnapshot: ChatContextSnapshot = {
       mode: targetIsGeneral ? 'general' : targetIsNotebook ? 'notebook' : targetIsDocument ? 'document' : 'selection',
       sourceNames: targetIsNotebook ? notebookAreas.map((area) => area.source.name) : source && !targetIsGeneral ? [source.name] : [],
@@ -1855,7 +1869,10 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
 
   const updatePanel = (id: PanelId, layout: PanelLayout) => setPanelLayouts((items) => ({ ...items, [id]: layout }))
   const raisePanel = (id: PanelId) => setPanelLayouts((items) => ({ ...items, [id]: { ...items[id], z: nextPanelZ(items) } }))
-  const togglePanel = (id: PanelId) => setPanelLayouts((items) => ({ ...items, [id]: { ...items[id], open: !items[id].open, z: nextPanelZ(items) } }))
+  const togglePanel = (requestedId: PanelId) => {
+    const id = requestedId === 'selection' ? 'chat' : requestedId
+    setPanelLayouts((items) => ({ ...items, [id]: { ...items[id], open: !items[id].open, z: nextPanelZ(items) } }))
+  }
   const toggleAnnotationMode = () => {
     setAnnotationMode((active) => {
       if (!active) {
@@ -1865,7 +1882,7 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
       return !active
     })
   }
-  const visiblePanelIds = (Object.keys(panelLayouts) as PanelId[]).filter((id) => panelLayouts[id].open && (
+  const visiblePanelIds = (Object.keys(panelLayouts) as PanelId[]).filter((id) => id !== 'selection' && panelLayouts[id].open && (
     id === 'projects' || ((id === 'chat' || id === 'studio') ? Boolean(activeProjectId) : Boolean(source))
   ))
   const leftPanelIds = visiblePanelIds.filter((id) => panelLayouts[id].dock === 'left')
@@ -1963,7 +1980,7 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
   const selectionTextItems = selections.filter((selection) => !selection.images.length && selection.text.trim())
   const selectionContent = <div className="selection-panel-body single" ref={selectionBodyRef}><section className="selection-content-section">
     <div className="section-label"><span>{t('selectedContent')} · {selections.length}</span>{selections.length > 0 && <button onClick={() => { selectionsRef.current = []; setSelections([]); setSelectedText('') }}><X size={14} /> {t('clear')}</button>}</div>
-    {selections.length === 0 ? <div className="selection-empty"><MousePointer2 size={22} /></div> : <div className="selection-visual-results">{selectionHasImages && <div className="selection-image-pane" ref={selectionImagesRef}><div className="selection-strip">{selections.flatMap((selection) => selection.images.map((image, imageIndex) => <div className="selection-thumb" key={`${selection.id}-${imageIndex}`}><img src={image} alt="选区预览" /><button className="remove-selection-image" onClick={() => removeSelectionImage(selection.id, imageIndex)}><X size={11} /></button></div>))}</div><p className="selection-visual-hint">区域选取会作为图片发送，不会自动转成文字。</p></div>}{selectionTextItems.length > 0 && <div className="selection-text-list">{selectionTextItems.map((selection) => <p key={selection.id}>{selection.text}</p>)}</div>}</div>}
+    {selections.length === 0 ? <div className="selection-empty"><MousePointer2 size={22} /></div> : <div className="selection-visual-results">{selectionHasImages && <div className="selection-image-pane" ref={selectionImagesRef}><div className="selection-strip">{selections.flatMap((selection) => selection.images.map((image, imageIndex) => { const page = selection.regions[imageIndex]?.page || selection.page; return <div className="selection-thumb" key={`${selection.id}-${imageIndex}`}><button type="button" className="selection-image-open" title="点击查看选区原图" onClick={() => setImagePreview({ url: image, name: `选区·第 ${page} 页·${imageIndex + 1}`, page, sourceName: source?.name })}><img src={image} alt="选区预览" /></button><button className="remove-selection-image" aria-label="移除这张选区图片" onClick={() => removeSelectionImage(selection.id, imageIndex)}><X size={11} /></button></div> }))}</div><p className="selection-visual-hint">区域选取会作为图片发送，不会自动转成文字；过长内容会分块保留清晰度。点击缩略图可查看原图。</p></div>}{selectionTextItems.length > 0 && <div className="selection-text-list">{selectionTextItems.map((selection) => <p key={selection.id}>{selection.text}</p>)}</div>}</div>}
   </section></div>
 
   const chatContent = <div className="chat-panel-layout">
@@ -1997,6 +2014,7 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
       </section>
       {error && <div className="error-banner"><X size={15} /><span>{error}</span></div>}
     </div>
+    {selections.length > 0 && <div className="chat-selection-context">{selectionContent}</div>}
     <div className="prompt-area">
       <div className="prompt-height-resizer" onPointerDown={startPromptResize} role="separator" aria-orientation="horizontal" />
       {((aiConfig.provider === 'codex' && !codexConnected) || (aiConfig.provider !== 'codex' && !aiConfig.apiKey && !configured)) && <button className="config-warning" onClick={openSettings}>{t('notConfigured')}</button>}
@@ -2022,7 +2040,7 @@ export default function App({ onLanguageChange }: { onLanguageChange: (language:
   }
   const panelMeta: Record<PanelId, { title: string; icon: ReactNode; actions?: ReactNode }> = {
     projects: { title: `项目 · ${projects.length}`, icon: <FolderOpen size={15} /> }, selection: { title: t('selection'), icon: <MousePointer2 size={15} /> },
-    chat: { title: t('aiAssistant'), icon: <BrainCircuit size={16} />, actions: <button onClick={createConversation} title={t('newConversation')}><Plus size={14} /></button> },
+    chat: { title: `${t('aiAssistant')} · ${t('selection')}`, icon: <BrainCircuit size={16} />, actions: <button onClick={createConversation} title={t('newConversation')}><Plus size={14} /></button> },
     studio: { title: 'Studio', icon: <Sparkles size={15} /> }, notes: { title: '笔记', icon: <StickyNote size={15} /> },
   }
   const renderPanel = (id: PanelId) => <WorkspacePanel key={id} id={id} title={panelMeta[id].title} icon={panelMeta[id].icon} actions={panelMeta[id].actions} layout={panelLayouts[id]} onChange={(layout) => updatePanel(id, layout)} onFocus={() => raisePanel(id)}>{panelContent[id]}</WorkspacePanel>

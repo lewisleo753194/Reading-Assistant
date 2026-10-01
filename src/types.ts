@@ -212,6 +212,7 @@ declare global {
       preparePanelDrag: () => void
       setPanelDragging: (active: boolean) => void
       setDockZones: (visible: boolean, active: 'left' | 'right' | null, dark?: boolean) => void
+      setModalOverlayActive: (active: boolean) => void
     }
   }
 }

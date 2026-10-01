@@ -4,6 +4,15 @@ All notable changes to Raid are documented here.
 
 ## [Unreleased]
 
+## [2.5.0] - 2026-10-01
+
+- 新增 GPT-6 Astra、GPT-6 Sol、GPT-6 Luna 与 GPT-6.1 Sol 模型选项，支持刷新账户可用模型并优先显示新模型。
+- 合并选区与 AI 对话面板；选区预览、自由提问、资料范围和附件在同一个面板内使用。
+- 修复 PDF 滚动跳跃：按每页真实尺寸预留空间，画布加载和虚拟页面切换不再改变页面高度。
+- 保留原作者 xyLee 与维护者 LewisLeo44 署名、现有项目及对话存储。
+
+
+
 ## [2.4.2] - 2026-09-05
 
 ### Added

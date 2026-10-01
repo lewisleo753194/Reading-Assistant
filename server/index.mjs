@@ -204,7 +204,7 @@ async function selectSkillAutomatically({ apiKey, baseUrl, model, skills, action
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({
         model,
-        temperature: 0,
+        ...(/^gpt-6(?:[.-]|$)/.test(model) ? {} : { temperature: 0 }),
         messages: [
           { role: 'system', content: '你是 Skill 路由器。根据任务选择最有帮助的一个 Skill。只返回对应的 /command；没有合适 Skill 时只返回 NONE。不要解释。' },
           { role: 'user', content: `任务类型：${action}\n用户要求：${String(instruction).slice(0, 2000)}\n材料片段：${material}\n\n可用 Skills：\n${catalog}` },
@@ -566,7 +566,7 @@ app.post('/api/ai/memory', async (req, res) => {
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({
         model,
-        temperature: 0,
+        ...(/^gpt-6(?:[.-]|$)/.test(model) ? {} : { temperature: 0 }),
         messages: [
           { role: 'system', content: memoryInstructions },
           { role: 'user', content: memoryPrompt },
@@ -754,7 +754,7 @@ app.post('/api/ai', async (req, res) => {
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({
         model,
-        temperature: 0.25,
+        ...(/^gpt-6(?:[.-]|$)/.test(model) ? {} : { temperature: 0.25 }),
         messages: [
           { role: 'system', content: systemPrompt },
           ...(earlierHistorySummary ? [{ role: 'user', content: `【较早对话摘要】\n${earlierHistorySummary}` }] : []),

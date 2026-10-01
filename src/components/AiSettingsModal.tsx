@@ -5,6 +5,8 @@ import { useI18n, type AppLanguage } from '../i18n'
 import type { AiConfig, CodexAccountStatus, ImportedSkill, MemorySettings } from '../types'
 import type { FileMemorySummary } from '../lib/memory'
 
+import { openAiModelPresets, orderModels } from '../lib/models'
+
 type SettingsTab = 'models' | 'skills' | 'memory' | 'language'
 type CodexLoginAttempt = { loginId: string; type: 'chatgpt' | 'chatgptDeviceCode'; authUrl?: string; verificationUrl?: string; userCode?: string }
 type ProjectMemorySummary = { id: string; name: string; sourceCount: number; conversationCount: number; updatedAt: number }
@@ -104,21 +106,22 @@ export default function AiSettingsModal({ value, serverConfigured, skills, langu
       .then((response) => response.json().then((data) => ({ ok: response.ok, data })))
       .then(({ ok, data }) => {
         if (!active || !ok || !Array.isArray(data.models) || !data.models.length) return
-        setAvailableModels((items) => ({ ...items, default: data.models }))
-        setDraft((current) => current.codexModel.trim() ? current : { ...current, codexModel: String(data.models[0]) })
+        setAvailableModels((items) => ({ ...items, default: orderModels(data.models) }))
+        setDraft((current) => current.codexModel.trim() ? current : { ...current, codexModel: orderModels(data.models)[0] })
       }).catch(() => undefined)
     return () => { active = false }
   }, [codexStatus?.account, draft])
 
   const fetchModels = async (mode: 'default' | 'vision' | 'reasoning') => {
     if (modelMenu === mode && availableModels[mode].length) return setModelMenu(null)
+    setModelMenu(mode)
     setLoadingModels(mode)
     setMessage(null)
     try {
       const response = await fetch('/api/ai/models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ aiConfig: draft, mode }) })
       const data = await response.json()
       if (!response.ok) throw new Error(data.error || (pack.code === 'en-US' ? 'Could not load models.' : '无法获取模型列表。'))
-      setAvailableModels((items) => ({ ...items, [mode]: data.models }))
+      setAvailableModels((items) => ({ ...items, [mode]: orderModels(data.models) }))
       setModelMenu(mode)
     } catch (reason) {
       setMessage({ type: 'error', text: reason instanceof Error ? reason.message : t('connectionFailed') })
@@ -128,9 +131,9 @@ export default function AiSettingsModal({ value, serverConfigured, skills, langu
   }
 
   const modelPicker = (mode: 'default' | 'vision' | 'reasoning', field: 'model' | 'visionModel' | 'reasoningModel' | 'codexModel', placeholder: string) => <div className="model-picker">
-    <input className="settings-input" value={draft[field]} onChange={(event) => setDraft({ ...draft, [field]: event.target.value })} placeholder={placeholder} />
+    <input className="settings-input" onFocus={() => setModelMenu(mode)} value={draft[field]} onChange={(event) => setDraft({ ...draft, [field]: event.target.value })} placeholder={placeholder} />
     <button type="button" className="model-help" onClick={() => void fetchModels(mode)} title={pack.code === 'en-US' ? 'Show available models' : '获取并显示可用模型'}>{loadingModels === mode ? <LoaderCircle className="spin" size={15} /> : <CircleHelp size={15} />}</button>
-    {modelMenu === mode && <div className="model-options">{availableModels[mode].map((model) => <button type="button" key={model} className={draft[field] === model ? 'active' : ''} onClick={() => { setDraft({ ...draft, [field]: model }); setModelMenu(null) }}>{model}</button>)}</div>}
+    {modelMenu === mode && <div className="model-options">{(availableModels[mode].length ? availableModels[mode] : openAiModelPresets).map((model) => <button type="button" key={model} className={draft[field] === model ? 'active' : ''} onClick={() => { setDraft({ ...draft, [field]: model }); setModelMenu(null) }}>{model}</button>)}</div>}
   </div>
 
   const testConnection = async () => {
@@ -249,7 +252,7 @@ export default function AiSettingsModal({ value, serverConfigured, skills, langu
                 : <div className="codex-login-buttons"><button type="button" className="codex-account-button" disabled={codexLoading || loginPending} onClick={() => void loginCodex('device')}>{codexLoading || loginPending ? <LoaderCircle className="spin" size={14} /> : <LogIn size={14} />}{loginPending ? (pack.code === 'en-US' ? 'Waiting…' : '等待登录…') : (pack.code === 'en-US' ? 'ChatGPT sign-in' : 'ChatGPT 会员登录')}</button><button type="button" className="codex-browser-login" disabled={codexLoading || loginPending} onClick={() => void loginCodex('browser')}>{pack.code === 'en-US' ? 'Browser callback' : '浏览器回调登录'}</button></div>}
             </div>
             {loginPending && loginAttempt?.type === 'chatgptDeviceCode' && <div className="codex-device-code"><span>{pack.code === 'en-US' ? 'Device code' : '设备码'}</span><code>{loginAttempt.userCode}</code><button type="button" onClick={() => void navigator.clipboard.writeText(loginAttempt.userCode || '')} title={t('copy')}><Copy size={13} /></button><a href={loginAttempt.verificationUrl} target="_blank" rel="noreferrer"><ExternalLink size={13} />{pack.code === 'en-US' ? 'Open sign-in page' : '打开登录页面'}</a></div>}
-            <label className="field-label">{pack.code === 'en-US' ? 'Codex model' : 'Codex 模型'}</label>{modelPicker('default', 'codexModel', pack.code === 'en-US' ? 'Use ? to load available models' : '点击右侧 ? 获取可用模型')}
+            <label className="field-label">{pack.code === 'en-US' ? 'Codex model' : 'Codex 模型'}</label>{modelPicker('default', 'codexModel', pack.code === 'en-US' ? 'Use ? to load available models' : '选择 GPT-6 / GPT-6.1，或点击 ? 刷新账户模型')}
             <section className="vision-config"><label className="vision-toggle"><input type="checkbox" checked={draft.webSearchEnabled} onChange={(event) => setDraft({ ...draft, webSearchEnabled: event.target.checked })} /><span className="vision-switch" aria-hidden="true" /><span><strong>{pack.code === 'en-US' ? 'Web search' : '联网搜索'}</strong><small>{pack.code === 'en-US' ? 'Allow Codex to search the live web when local sources are insufficient or current information is requested.' : '当项目资料不足或问题需要最新信息时，允许 Codex 搜索实时网页。'}</small></span></label></section>
             <section className="vision-config"><label className="vision-toggle"><input type="checkbox" checked={draft.codexDeepThinkingEnabled} onChange={(event) => setDraft({ ...draft, codexDeepThinkingEnabled: event.target.checked })} /><span className="vision-switch" aria-hidden="true" /><span><strong>{t('enableDeepThinking')}</strong><small>{pack.code === 'en-US' ? 'The prompt switch controls when the higher effort is used.' : '开启后，可在输入框下方按任务切换深度思考。'}</small></span></label>{draft.codexDeepThinkingEnabled && <div className="vision-fields">
               <label className="field-label">{pack.code === 'en-US' ? 'Reasoning effort' : '推理强度'}</label><select className="settings-input" value={draft.codexReasoningEffort} onChange={(event) => setDraft({ ...draft, codexReasoningEffort: event.target.value as AiConfig['codexReasoningEffort'] })}><option value="medium">medium</option><option value="high">high</option><option value="xhigh">xhigh</option><option value="low">low</option></select>

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, session, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, session, shell } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -8,10 +8,14 @@ import { cleanupDirectoryContents, createStorageLayout, migrateLegacyUserDataAsy
 let localServer = null
 let mainWindow = null
 const dockZoneWindows = new Map()
+const modalHiddenPanelWindows = new Set()
 const panelDragBounds = new WeakMap()
 const panelPreparedBounds = new WeakMap()
 const dirname = path.dirname(fileURLToPath(import.meta.url))
-const appIconPath = path.join(dirname, process.platform === 'win32' ? 'app-icon.ico' : 'app-icon.png')
+const sourceAppIconPath = path.join(dirname, process.platform === 'win32' ? 'app-icon.ico' : 'app-icon.png')
+const packagedAppIconPath = path.join(process.resourcesPath, process.platform === 'win32' ? 'app-icon.ico' : 'app-icon.png')
+const appIconPath = app.isPackaged ? packagedAppIconPath : sourceAppIconPath
+const appIconImage = nativeImage.createFromPath(appIconPath)
 const dockZoneWidth = 32
 const textFileExtensions = new Set(['.md', '.txt', '.json', '.yaml', '.yml', '.toml', '.csv', '.tsv', '.tex'])
 const isDevelopmentInstance = process.argv.includes('--development-instance')
@@ -222,6 +226,24 @@ ipcMain.on('reading-assistant:set-dock-zones', (event, payload) => {
   setDockZones(Boolean(payload?.visible), active, Boolean(payload?.dark))
 })
 
+ipcMain.on('reading-assistant:set-modal-overlay-active', (event, payload) => {
+  if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return
+  if (payload?.active) {
+    for (const panelWindow of mainWindow.getChildWindows()) {
+      if (panelWindow.isDestroyed() || !panelWindow.isVisible()) continue
+      modalHiddenPanelWindows.add(panelWindow)
+      panelWindow.hide()
+    }
+    mainWindow.show()
+    mainWindow.focus()
+    return
+  }
+  for (const panelWindow of modalHiddenPanelWindows) {
+    if (!panelWindow.isDestroyed()) panelWindow.showInactive()
+  }
+  modalHiddenPanelWindows.clear()
+})
+
 async function createWindow() {
   logStartup('Starting local service')
   const started = await startServer(internalPort, { runtimeDirectory: storageLayout.runtimeDir })
@@ -246,10 +268,13 @@ async function createWindow() {
     },
   })
 
+  if (!appIconImage.isEmpty()) mainWindow.setIcon(appIconImage)
+  else logStartup(`Application icon unavailable: ${appIconPath}`)
   mainWindow.setMenuBarVisibility(false)
   mainWindow.on('closed', () => {
     for (const zoneWindow of dockZoneWindows.values()) if (!zoneWindow.isDestroyed()) zoneWindow.destroy()
     dockZoneWindows.clear()
+    modalHiddenPanelWindows.clear()
     mainWindow = null
   })
   logStartup('Browser window created')
@@ -265,6 +290,7 @@ async function createWindow() {
           minWidth: 260,
           minHeight: 220,
           backgroundColor: '#252526',
+          icon: appIconPath,
           webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, preload: path.join(dirname, 'preload.cjs') },
         },
       }
