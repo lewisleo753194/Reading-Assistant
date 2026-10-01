@@ -4,19 +4,11 @@ import { createInterface } from 'node:readline'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { resolveCodexProcessSpec } from './codex-runtime.mjs'
 
-const CLIENT_INFO = { name: 'raid-reading-assistant', title: 'Raid Reading Assistant', version: '2.3.0' }
+const CLIENT_INFO = { name: 'raid-reading-assistant', title: 'Raid Reading Assistant', version: '2.5.1' }
 const DEFAULT_TIMEOUT = 30_000
 const TURN_TIMEOUT = 10 * 60_000
-
-function codexProcessSpec(platform = process.platform) {
-  const configuredPath = String(process.env.CODEX_CLI_PATH || '').trim()
-  if (configuredPath) return { command: configuredPath, args: ['app-server'] }
-  if (platform === 'win32') {
-    return { command: process.env.ComSpec || 'cmd.exe', args: ['/d', '/s', '/c', 'codex app-server'] }
-  }
-  return { command: 'codex', args: ['app-server'] }
-}
 
 function appServerError(error, fallback) {
   const message = error && typeof error === 'object' && 'message' in error ? String(error.message) : fallback
@@ -82,7 +74,7 @@ export class CodexAppServer extends EventEmitter {
   }
 
   async start() {
-    const { command, args } = codexProcessSpec(this.platform)
+    const { command, args } = await resolveCodexProcessSpec({ platform: this.platform })
     this.expectedClose = false
     this.stderr = []
     let child

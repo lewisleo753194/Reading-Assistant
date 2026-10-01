@@ -18,14 +18,14 @@
     "node": ">=20"
   },
   "private": true,
-  "version": "2.5.0",
+  "version": "2.5.1",
   "type": "module",
   "main": "electron/main.mjs",
   "scripts": {
     "prepare:pdf-assets": "node scripts/sync-pdfjs-assets.mjs",
     "dev": "npm run prepare:pdf-assets && concurrently -k \"vite\" \"node --watch server/index.mjs\"",
     "build": "npm run prepare:pdf-assets && tsc -b && vite build",
-    "test:codex": "node --test tests/codex-app-server.test.mjs tests/ai-compatible-regression.test.mjs tests/responses-file-search.test.mjs tests/project-ui-regression.test.mjs tests/streaming-ui-regression.test.mjs tests/upgrade-250.test.mjs tests/selection-ocr-regression.test.mjs tests/conversation-attachments.test.mjs tests/storage-manager.test.mjs tests/pdf-full-processing-regression.test.mjs",
+    "test:codex": "node --test tests/codex-app-server.test.mjs tests/ai-compatible-regression.test.mjs tests/responses-file-search.test.mjs tests/project-ui-regression.test.mjs tests/streaming-ui-regression.test.mjs tests/upgrade-250.test.mjs tests/selection-ocr-regression.test.mjs tests/conversation-attachments.test.mjs tests/storage-manager.test.mjs tests/pdf-full-processing-regression.test.mjs tests/codex-runtime.test.mjs",
     "preview": "node server/index.mjs",
     "lint": "eslint .",
     "desktop": "npm run build && electron .",
@@ -40,7 +40,7 @@
     "asar": true,
     "electronDist": "node_modules/electron/dist",
     "directories": {
-      "output": "release-2.5.0"
+      "output": "release-2.5.1"
     },
     "extraResources": [
       {

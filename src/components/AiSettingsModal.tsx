@@ -100,9 +100,9 @@ export default function AiSettingsModal({ value, serverConfigured, skills, langu
   }, [loginPending, loginAttempt, pack.code, readCodexStatus])
 
   useEffect(() => {
-    if (!codexStatus?.account || draft.provider !== 'codex' || draft.codexModel.trim()) return
+    if (!codexStatus?.account || draft.provider !== 'codex') return
     let active = true
-    void fetch('/api/ai/models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ aiConfig: draft, mode: 'default' }) })
+    void fetch('/api/ai/models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ aiConfig: { provider: 'codex' }, mode: 'default' }) })
       .then((response) => response.json().then((data) => ({ ok: response.ok, data })))
       .then(({ ok, data }) => {
         if (!active || !ok || !Array.isArray(data.models) || !data.models.length) return
@@ -110,7 +110,7 @@ export default function AiSettingsModal({ value, serverConfigured, skills, langu
         setDraft((current) => current.codexModel.trim() ? current : { ...current, codexModel: orderModels(data.models)[0] })
       }).catch(() => undefined)
     return () => { active = false }
-  }, [codexStatus?.account, draft])
+  }, [codexStatus?.account, draft.provider])
 
   const fetchModels = async (mode: 'default' | 'vision' | 'reasoning') => {
     if (modelMenu === mode && availableModels[mode].length) return setModelMenu(null)
@@ -133,7 +133,7 @@ export default function AiSettingsModal({ value, serverConfigured, skills, langu
   const modelPicker = (mode: 'default' | 'vision' | 'reasoning', field: 'model' | 'visionModel' | 'reasoningModel' | 'codexModel', placeholder: string) => <div className="model-picker">
     <input className="settings-input" onFocus={() => setModelMenu(mode)} value={draft[field]} onChange={(event) => setDraft({ ...draft, [field]: event.target.value })} placeholder={placeholder} />
     <button type="button" className="model-help" onClick={() => void fetchModels(mode)} title={pack.code === 'en-US' ? 'Show available models' : '获取并显示可用模型'}>{loadingModels === mode ? <LoaderCircle className="spin" size={15} /> : <CircleHelp size={15} />}</button>
-    {modelMenu === mode && <div className="model-options">{(availableModels[mode].length ? availableModels[mode] : openAiModelPresets).map((model) => <button type="button" key={model} className={draft[field] === model ? 'active' : ''} onClick={() => { setDraft({ ...draft, [field]: model }); setModelMenu(null) }}>{model}</button>)}</div>}
+    {modelMenu === mode && <div className="model-options">{(availableModels[mode].length ? availableModels[mode] : draft.provider === 'codex' ? [] : openAiModelPresets).map((model) => <button type="button" key={model} className={draft[field] === model ? 'active' : ''} onClick={() => { setDraft({ ...draft, [field]: model }); setModelMenu(null) }}>{model}</button>)}</div>}
   </div>
 
   const testConnection = async () => {

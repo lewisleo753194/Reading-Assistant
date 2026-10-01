@@ -59,13 +59,13 @@ test('PDF and OCR resources are released instead of accumulating across sources'
   assert.match(canvas, /buffer\.width = 0[\s\S]{0,80}buffer\.height = 0/)
 })
 
-test('2.5.0 packaging has dedicated portable and setup outputs', async () => {
+test('release packaging has dedicated portable and setup outputs', async () => {
   const packageJson = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
 
-  assert.equal(packageJson.version, '2.5.0')
+  assert.match(packageJson.version, /^\d+\.\d+\.\d+$/)
   assert.equal(packageJson.scripts['desktop:portable'], 'npm run build && electron-builder --win portable --config.win.artifactName=Raid-Portable-${version}.${ext}')
   assert.equal(packageJson.scripts['desktop:pack'], 'npm run build && electron-builder --win nsis')
-  assert.equal(packageJson.build.directories.output, 'release-2.5.0')
+  assert.equal(packageJson.build.directories.output, `release-${packageJson.version}`)
   assert.equal(packageJson.build.win.artifactName, 'Raid-Setup-${version}.${ext}')
 })
 
